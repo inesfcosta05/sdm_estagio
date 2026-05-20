@@ -1448,7 +1448,7 @@ const PORT = process.env.PORT || 3001;
 const syncService = new SyncService(
   db,
   process.env.WP_API_URL,
-  parseInt(process.env.SYNC_INTERVAL || '300000', 10) // 5 minutos por padrão
+  parseInt(process.env.SYNC_INTERVAL || '60000', 10) // 1 minuto por padrão
 );
 
 // Iniciar sincronização automática se WP_API_URL estiver configurada
