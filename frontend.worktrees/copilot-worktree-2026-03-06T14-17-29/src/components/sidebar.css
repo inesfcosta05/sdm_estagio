@@ -1,0 +1,618 @@
+/* SIDEBAR CLEAN */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  background: linear-gradient(180deg, #1a1d2e 0%, #16213e 100%);
+  backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255,255,255,0.1);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+/* LOGO */
+.sidebar-logo {
+  padding: 1.5rem 1.25rem;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.logo-text h5 {
+  color: #4f46e5;
+  font-weight: 700;
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.logo-text small {
+  color: rgba(255,255,255,0.6);
+}
+
+.logo-icon {
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 700;
+  font-size: 1.1rem;
+  margin: 0 auto;
+}
+
+/* MENU */
+.sidebar-menu {
+  padding: 1.5rem 0;
+  flex: 1;
+}
+
+.sidebar-item,
+.section-toggle {
+  display: flex;
+  align-items: center;
+  padding: 0.875rem 1.25rem;
+  color: rgba(255,255,255,0.8);
+  text-decoration: none;
+  border-radius: 0;
+  margin: 0.25rem 1rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 500;
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar-item:hover,
+.section-toggle:hover {
+  background: rgba(255,255,255,0.08);
+  color: white;
+  transform: translateX(4px);
+  border-radius: 0;
+}
+
+.sidebar-item.active,
+.section-toggle.active {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: white;
+  box-shadow: 0 4px 20px rgba(79, 70, 229, 0.4);
+}
+
+span {
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+/* SUBMENU */
+.submenu {
+  padding-left: 2.5rem;
+  margin-top: 0.25rem;
+}
+
+.sublink {
+  padding: 0.5rem 1rem !important;
+  margin: 0.125rem 0 !important;
+  font-size: 0.9rem;
+  border-radius: 0;
+}
+
+/* MINIMIZADA */
+.sidebar-minimized .logo-text,
+.sidebar-minimized span,
+.sidebar-minimized .submenu,
+.sidebar-minimized .section-toggle span {
+  opacity: 0;
+  transform: translateX(20px);
+  pointer-events: none;
+}
+
+.sidebar-minimized {
+  width: 56px !important;
+  overflow: visible !important; /* allow floating menu to render outside */
+}
+
+/* Smooth minimize / unminimize transitions */
+.sidebar {
+  transition: width 260ms cubic-bezier(.2,.8,.2,1);
+  will-change: width;
+  overflow: hidden;
+  -webkit-transform: translateZ(0);
+}
+
+/* Use transform + opacity for text to avoid layout reflow on collapse */
+.sidebar .sidebar-text {
+  transition: opacity 170ms ease, transform 200ms cubic-bezier(.2,.8,.2,1);
+  opacity: 1;
+  transform: translateX(0);
+  max-width: calc(var(--sidebar-expanded-w) - var(--sidebar-icon-w) - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-minimized .sidebar-text {
+  opacity: 0 !important;
+  transform: translateX(-6px) !important;
+}
+
+/* During JS-driven animation add this class to suppress pointer events and hint rendering */
+.sidebar.animating {
+  pointer-events: none;
+}
+
+/* Center icons when sidebar is minimized */
+.sidebar-minimized .sidebar-menu,
+.sidebar-minimized .sidebar-link,
+.sidebar-minimized .sidebar-item {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  margin: 0.25rem 0 !important;
+}
+
+.sidebar-minimized .logo-icon {
+  margin: 0 auto !important;
+}
+
+/* Keep consistent item height so icons don't shift when collapsing */
+.sidebar .sidebar-item,
+.sidebar .sidebar-link {
+  height: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Ensure minimized sidebar keeps same vertical spacing */
+.sidebar-minimized .sidebar-item,
+.sidebar-minimized .sidebar-link {
+  height: 48px !important;
+  min-height: 48px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-minimized .sidebar-item .sidebar-text,
+.sidebar-minimized .sidebar-link .sidebar-text {
+  display: none !important;
+}
+
+/* Consistent sizing and spacing to make minimize / restore clean */
+:root{
+  --sidebar-item-h:48px;
+  --sidebar-icon-w:28px;
+  --sidebar-gap:12px;
+  --sidebar-expanded-w:220px;
+  --sidebar-collapsed-w:56px;
+}
+
+/* Ensure the sidebar container uses the defined widths (kept minimal to avoid conflicts) */
+.sidebar {
+  width: var(--sidebar-expanded-w);
+  min-width: var(--sidebar-expanded-w);
+  box-sizing: border-box;
+}
+
+.sidebar-minimized {
+  width: var(--sidebar-collapsed-w) !important;
+  min-width: var(--sidebar-collapsed-w) !important;
+}
+
+/* Compose minimized sidebar to visually match expanded version */
+.sidebar-minimized {
+  background: inherit; /* keep same background/gradient as expanded */
+  border-right: 1px solid rgba(255,255,255,0.03);
+  box-shadow: none;
+}
+
+/* Top logo area when minimized */
+.sidebar-minimized .logo {
+  height: var(--sidebar-item-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-minimized .logo a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Center icons and give hover/active feedback similar to expanded */
+.sidebar-minimized .sidebar-item,
+.sidebar-minimized .sidebar-link {
+  justify-content: center;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.sidebar-minimized .sidebar-item:hover,
+.sidebar-minimized .sidebar-link:hover {
+  background-color: rgba(255,255,255,0.03);
+}
+
+.sidebar-minimized .sidebar-item.active,
+.sidebar-minimized .sidebar-link.active {
+  background-color: rgba(255,255,255,0.05);
+}
+
+/* Footer control (minimize toggle) alignment in minimized state */
+.sidebar-minimized .sidebar-footer {
+  height: var(--sidebar-item-h);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 0;
+}
+
+/* Small tweak: prevent text selection flicker while animating */
+.sidebar-minimized,
+.sidebar {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Sidebar items: same height and vertical centering */
+.sidebar .sidebar-item,
+.sidebar .sidebar-link,
+.sidebar .logo,
+.sidebar .sidebar-footer {
+  height: var(--sidebar-item-h);
+  min-height: var(--sidebar-item-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sidebar-gap);
+  box-sizing: border-box;
+}
+
+/* Icon sizing and centering */
+/* This is the main rule for all icons to ensure they are consistent */
+.sidebar .sidebar-item i,
+.sidebar .sidebar-link i,
+.sidebar .sidebar-icon {
+  width: var(--sidebar-icon-w);
+  min-width: var(--sidebar-icon-w);
+  height: var(--sidebar-icon-w);
+  text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem; /* Consistent font size */
+  flex-shrink: 0;
+  transition: color 160ms ease;
+}
+
+/* Text block: animate and keep aligned */
+.sidebar .sidebar-text {
+  transition: opacity 160ms ease, max-width 220ms cubic-bezier(.2,.8,.2,1), margin 160ms ease;
+  opacity: 1;
+  max-width: calc(var(--sidebar-expanded-w) - var(--sidebar-icon-w) - 32px);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* When collapsed, center icons and hide text cleanly */
+.sidebar-minimized .sidebar-item,
+.sidebar-minimized .sidebar-link,
+.sidebar-minimized .logo,
+.sidebar-minimized .sidebar-footer {
+  justify-content: center;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.sidebar-minimized .sidebar-text {
+  opacity: 0 !important;
+  max-width: 0 !important;
+  margin: 0 !important;
+}
+
+/* Make sure separators and sections keep the same spacing */
+.sidebar hr,
+.sidebar .divider {
+  height: 1px;
+  border: 0;
+  background: rgba(255,255,255,0.04);
+  margin: 12px 0;
+}
+
+/* Make hr centered and consistent when collapsed */
+.sidebar-minimized hr,
+.sidebar-minimized .divider {
+  width: calc(var(--sidebar-collapsed-w) - 16px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Footer/minimize control: same height and centered */
+.sidebar .sidebar-footer {
+  margin-top: auto;
+  padding: 0 12px;
+}
+
+.sidebar-minimized .sidebar-footer {
+  padding: 0;
+}
+
+/* FOOTER */
+.sidebar-footer {
+  padding: 1.5rem 1rem;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-bottom: 2rem;
+}
+
+.minimize-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  border-radius: 12px;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto;
+  backdrop-filter: blur(10px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.minimize-btn:hover {
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.3);
+  transform: scale(1.05);
+}
+
+/* Hover para o botão de minimizar (texto completo) */
+.minimize-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.minimize-link:hover {
+  background-color: rgba(255,255,255,0.08);
+  color: #fff !important;
+  border-radius: 0;
+  transform: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+/* Ensure minimize hover overrides Bootstrap or other rules */
+.sidebar .minimize-link:hover,
+.sidebar button.minimize-link:hover {
+  background-color: rgba(255,255,255,0.08) !important;
+  color: #fff !important;
+}
+
+.sidebar .minimize-link:hover i,
+.sidebar button.minimize-link:hover i {
+  color: #fff !important;
+}
+
+/* TOOLBAR TOOLTIPS */
+.sidebar-minimized .sidebar-item::after,
+.sidebar-minimized .section-toggle::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 60px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0,0,0,0.9);
+  backdrop-filter: blur(20px);
+  color: white;
+  padding: 0.5rem 1rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.3s ease;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+.sidebar-minimized .sidebar-item:hover::after,
+.sidebar-minimized .section-toggle:hover::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* RESPONSIVO */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+  .sidebar-minimized {
+    transform: translateX(0);
+  }
+}
+
+
+
+.sidebar-link {
+  color: rgba(255,255,255,0.8) !important;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem !important;
+  border-radius: 0;
+}
+
+.sidebar-link.active,
+.sidebar-link:hover {
+  background-color: rgba(255,255,255,0.08);
+  color: #fff !important;
+  border-radius: 0;
+}
+
+.sidebar-submenu {
+  padding-left: 1.5rem;
+}
+
+.sidebar-sublink {
+  color: rgba(255,255,255,0.7) !important;
+  padding: 0.3rem 0.75rem !important;
+}
+
+.sidebar-sublink.active,
+.sidebar-sublink:hover {
+  color: #fff !important;
+  background-color: rgba(255,255,255,0.08);
+  border-radius: 0;
+  transform: translateX(4px);
+}
+
+.sidebar-minimized .sidebar-submenu,
+.sidebar-minimized .sidebar-sublink span {
+  display: none;
+}
+
+.sidebar a,
+.sidebar button {
+  text-decoration: none !important;
+}
+
+/* Floating menu styles (styled to match sidebar) */
+.floating-menu {
+  border: 0;
+  border-radius: 0; /* square corners to match sidebar */
+  box-shadow: none; /* keep clean look */
+  background: #2f3336 !important; /* single solid color for the whole box */
+  overflow: visible;
+  min-width: 200px;
+  position: absolute; /* place next to the trigger button */
+  left: calc(100% + 8px);
+  z-index: 1002;
+}
+
+.floating-menu::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 14px;
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-right: 8px solid #2f3336; /* match floating header (dark gray) */
+}
+
+.floating-menu::after {
+  content: "";
+  position: absolute;
+  left: -7px; 
+  top: 14px;
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-right: 7px solid #2f3336; /* match floating header (dark gray) */
+}
+
+.floating-header {
+  background: #2f3336 !important; /* same solid color as box */
+  color: #ffffff !important;
+  font-weight: 400; /* normal weight */
+  padding: 10px 8px; /* reduce left padding so header text aligns with body items */
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.floating-header span {
+  color: #ffffff !important;
+}
+
+.floating-header i { display: none; 
+color: #ffffff;}
+
+.floating-body {
+  background: #2f3336 !important; /* same solid color as box */
+  padding: 6px 8px 10px;
+}
+
+/* title moved into header; no separate .floating-title needed */
+
+.floating-link {
+  display: block;
+  color: #ffffff !important;
+  padding: 8px 12px;
+  border-radius: 0; /* square corners */
+  text-decoration: none !important;
+  font-size: 0.95rem;
+  font-weight: 400; /* normal weight */
+}
+
+.floating-link + .floating-link {
+  margin-top: 6px;
+  color: rgba(255,255,255,0.62);
+}
+
+.floating-link:hover {
+  background: rgba(255,255,255,0.03);
+  color: rgba(255,255,255,0.95);
+}
+
+.floating-link:first-child {
+  font-weight: 400; /* ensure normal weight on first item */
+}
+
+/* Helper: wrap the trigger button with this class so the floating menu positions next to it */
+.floating-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Overrides: ensure square box, normal weight and match trigger height when used as wrapper */
+/* Ensure floating menu uses a single solid background and consistent arrow positioning */
+.floating-menu {
+  border-radius: 0 !important;
+  background: #2f3336 !important;
+}
+
+.floating-menu::before,
+.floating-menu::after {
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+}
+
+/* cleaned duplicate floating-header rules above */
+
+.floating-link {
+  font-weight: 400 !important;
+  border-radius: 0 !important;
+}
+
+/* Don't force the floating menu to match trigger height anymore */
+.floating-trigger .floating-menu {
+  left: calc(100% + 8px) !important;
+  top: 0 !important;
+  transform: none !important;
+  min-width: 0 !important;
+  display: block !important;
+  align-items: stretch !important;
+  padding: 0 !important;
+}
+
+/* Ensure no bold inside floating menu and make direct children fill trigger height */
+.floating-menu, .floating-menu * {
+  font-weight: 400 !important;
+}
+
+/* no forced child height */
+
+/* Override sidebar-minimized span rule so floating menu text is visible */
+.floating-menu, .floating-menu * {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+}
