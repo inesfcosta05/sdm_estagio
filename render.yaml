@@ -13,6 +13,11 @@ services:
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: build
+    envVars:
+      - key: CI
+        value: false
+      - key: GENERATE_SOURCEMAP
+        value: false
     routes:
       - type: rewrite
         source: /*
