@@ -2,7 +2,7 @@
   "name": "fichas-backend",
   "version": "1.0.0",
   "scripts": {
-    "start": "node scripts/start-backend.js",
+    "start": "node server.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {

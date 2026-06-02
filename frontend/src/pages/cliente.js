@@ -141,7 +141,6 @@ const Clientes = () => {
   };
   const getData = (c) => c.publicado_em || c.data_contacto || c.created_at || c.updated_at || c.post_date;
   const getId = (c) => c.id || c.legacy_id || c.ID;
-  const getPreview = (c) => c.contacto_empresa || c.pessoa_contacto_nome || c.morada || c.pessoa_contacto_telefone_email || 'Sem informação adicional.';
 
   const replaceCliente = (client, updates) => ({
     ...client,
