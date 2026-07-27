@@ -864,12 +864,18 @@ app.get('/api/perfil', (req, res) => {
             console.warn('GET perfil: tabela users não existe, tentar wp_users');
             return queryWpUsers();
           }
+          // Column mismatch (e.g. schema uses 'nome' instead of 'name') — fallback
+          if (userErr && (userErr.code === 'ER_BAD_FIELD_ERROR' || userErr.errno === 1054)) {
+            console.warn('GET perfil: coluna inválida em users, tentar wp_users:', userErr.message);
+            return queryWpUsers();
+          }
           console.error('GET perfil DB error:', userErr.message);
           return res.status(500).json({ error: userErr.message });
         }
 
         if (!users || users.length === 0) {
-          return res.status(404).json({ error: 'Utilizador nao encontrado' });
+          // Fallback: tentar wp_users se não encontrado em users
+          return queryWpUsers();
         }
 
         const user = users[0];
