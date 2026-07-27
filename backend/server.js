@@ -74,6 +74,26 @@ const db = mysql.createConnection({
 db.connect(err => {
   if (err) { console.error('❌ MYSQL FALHOU:', err.message); return; }
   console.log('✅ MySQL OK!');
+
+  // Garantir que a tabela users existe com a estrutura correta
+  db.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255),
+      role ENUM('admin', 'editor', 'contributor') DEFAULT 'editor',
+      preferences TEXT,
+      created_at DATETIME DEFAULT NOW(),
+      updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
+      INDEX idx_name (name),
+      INDEX idx_email (email)
+    )
+  `, (createErr) => {
+    if (createErr) console.error('Erro ao criar tabela users:', createErr.message);
+    else console.log('✅ Tabela users OK');
+  });
+
   // Garantir coluna preferences (compatível com MySQL 5.7+)
   db.query(
     `SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS
@@ -1505,6 +1525,39 @@ app.post('/api/sync/webhook', async (req, res) => {
       error: error.message 
     });
   }
+});
+
+// Setup: criar primeiro utilizador admin (só funciona se não existir nenhum admin)
+app.post('/api/setup/admin', (req, res) => {
+  const { name, email, password } = req.body || {};
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'name, email e password são obrigatórios' });
+  }
+  db.query('SELECT COUNT(*) AS cnt FROM users WHERE role = ?', ['admin'], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (rows[0].cnt > 0) {
+      return res.status(403).json({ error: 'Já existe um administrador. Endpoint desativado.' });
+    }
+    const hash = crypto.createHash('sha256').update(password).digest('hex');
+    db.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)',
+      [name.trim(), email.trim().toLowerCase(), hash, 'admin'],
+      (insertErr, result) => {
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+        res.json({ success: true, id: result.insertId, name: name.trim(), email: email.trim().toLowerCase(), role: 'admin' });
+      }
+    );
+  });
+});
+
+// Health check endpoint (required by Render)
+app.get('/health', (req, res) => {
+  db.query('SELECT 1', (err) => {
+    if (err) {
+      return res.status(503).json({ status: 'error', db: err.message });
+    }
+    res.json({ status: 'ok' });
+  });
 });
 
 const PORT = process.env.PORT || 3001;
