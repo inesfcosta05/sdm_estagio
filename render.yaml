@@ -5,7 +5,12 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: node server.js
-    healthCheckPath: /api/fichas
+    healthCheckPath: /health
+    envVars:
+      - key: FRONTEND_URLS
+        value: http://localhost:3000,https://fichas-frontend.onrender.com
+      - key: FALLBACK_AUTH
+        value: true
 
   - type: web
     name: fichas-frontend
@@ -18,6 +23,8 @@ services:
         value: false
       - key: GENERATE_SOURCEMAP
         value: false
+      - key: REACT_APP_API_BASE_URL
+        value: https://fichas-backend.onrender.com
     routes:
       - type: rewrite
         source: /*

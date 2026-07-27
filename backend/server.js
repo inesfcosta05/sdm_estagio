@@ -10,10 +10,23 @@ const axios = require('axios');
 const SyncService = require('./sync-service');
 
 const app = express();
-const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:3000')
+let allowedOriginsRaw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
+if (!allowedOriginsRaw) {
+  // If not set, provide a sensible default for local dev and a permissive
+  // behaviour in production to avoid accidental CORS blocks on Render.
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    allowedOriginsRaw = '*'; // allow all origins in production when not configured
+    console.warn('⚠️ FRONTEND_URLS not set — allowing all origins (production).');
+  } else {
+    allowedOriginsRaw = 'http://localhost:3000,https://fichas-frontend.onrender.com';
+  }
+}
+
+const allowedOrigins = allowedOriginsRaw
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
+const dbPassword = process.env.DB_PASS || process.env.DB_PASSWORD || '';
 
 const isDevLocalOrigin = (origin) => {
   if (!origin) return false;
@@ -34,6 +47,14 @@ const isDevLocalOrigin = (origin) => {
 app.use(
   cors({
     origin(origin, callback) {
+      // Log origin for easier debugging in Render logs
+      try { console.debug('CORS origin:', origin); } catch (e) {}
+
+      // If allowedOrigins contains '*' allow all
+      if (allowedOrigins.includes('*')) {
+        return callback(null, true);
+      }
+
       if (!origin || allowedOrigins.includes(origin) || isDevLocalOrigin(origin)) {
         return callback(null, true);
       }
@@ -46,7 +67,7 @@ app.use(express.json());
 const db = mysql.createConnection({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASS || '',
+  password: dbPassword,
   database: process.env.DB_NAME || 'wp_migracion'
 });
 
@@ -745,11 +766,53 @@ app.get('/api/perfil', (req, res) => {
     return res.status(400).json({ error: 'Parametro login em falta' });
   }
 
+  const sendWpUser = (wpUserRow) => {
+    if (!wpUserRow) {
+      return res.status(404).json({ error: 'Utilizador nao encontrado' });
+    }
+
+    return res.json({
+      id: wpUserRow.id,
+      username: (wpUserRow.username || '').toString(),
+      email: (wpUserRow.email || '').toString(),
+      role: 'editor',
+      displayName: (wpUserRow.displayName || wpUserRow.username || '').toString(),
+      firstName: '',
+      lastName: '',
+      nickname: (wpUserRow.displayName || wpUserRow.username || '').toString(),
+      bio: '',
+      site: '',
+      avatarUrl: '',
+      preferences: {}
+    });
+  };
+
+  const queryWpUsers = () => {
+    db.query(
+      `SELECT ID AS id, user_login AS username, user_email AS email, display_name AS displayName
+       FROM wp_users
+       WHERE LOWER(user_login) = LOWER(?) OR LOWER(user_email) = LOWER(?) OR LOWER(display_name) = LOWER(?)
+       LIMIT 1`,
+      [login, login, login],
+      (wpErr, wpRows) => {
+        if (wpErr) {
+          console.error('GET perfil wp_users DB error:', wpErr.message);
+          return res.status(500).json({ error: wpErr.message });
+        }
+        return sendWpUser((wpRows && wpRows[0]) || null);
+      }
+    );
+  };
+
   // Verificar que colunas existem na tabela users
   db.query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`,
     (colErr, colRows) => {
-      if (colErr) return res.status(500).json({ error: colErr.message });
+      if (colErr) {
+        // Some managed databases can restrict INFORMATION_SCHEMA access.
+        console.warn('GET perfil: falha em INFORMATION_SCHEMA, tentar wp_users:', colErr.message);
+        return queryWpUsers();
+      }
 
       const existingCols = colRows.map(r => r.COLUMN_NAME);
       const has = (col) => existingCols.includes(col);
@@ -776,6 +839,11 @@ app.get('/api/perfil', (req, res) => {
 
       db.query(sql, whereParams, (userErr, users) => {
         if (userErr) {
+          // If custom users table does not exist in production, fallback to wp_users.
+          if (userErr && (userErr.code === 'ER_NO_SUCH_TABLE' || userErr.errno === 1146)) {
+            console.warn('GET perfil: tabela users não existe, tentar wp_users');
+            return queryWpUsers();
+          }
           console.error('GET perfil DB error:', userErr.message);
           return res.status(500).json({ error: userErr.message });
         }

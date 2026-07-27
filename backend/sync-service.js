@@ -19,6 +19,7 @@ class SyncService {
     this.syncInterval = syncInterval; // 5 minutos por padrão
     this.lastSync = {};
     this.isRunning = false;
+    this.isSyncing = false;
   }
 
   getWordPressAuthHeaders() {
@@ -39,43 +40,69 @@ class SyncService {
   }
 
   async fetchWordPressCollection(resourcePath) {
-    const itemsById = new Map();
+    const collect = async (useEditContext) => {
+      const itemsById = new Map();
+      const queryParts = [
+        'per_page=100',
+        `context=${useEditContext ? 'edit' : 'view'}`
+      ];
 
-    const useEditContext = this.hasWordPressAuth();
-    const queryParts = [
-      'per_page=100',
-      `context=${useEditContext ? 'edit' : 'view'}`
-    ];
+      queryParts.push(useEditContext ? 'status=any' : 'status=publish');
 
-    if (useEditContext) {
-      queryParts.push('status=any');
-    } else {
-      queryParts.push('status=publish');
-    }
+      let page = 1;
+      let hasMore = true;
 
-    let page = 1;
-    let hasMore = true;
+      while (hasMore) {
+        const separator = resourcePath.includes('?') ? '&' : '?';
+        const endpoint = `${resourcePath}${separator}${queryParts.join('&')}&page=${page}`;
+        const wpResponse = await this.getFromWordPressResponse(endpoint);
 
-    while (hasMore) {
-      const separator = resourcePath.includes('?') ? '&' : '?';
-      const endpoint = `${resourcePath}${separator}${queryParts.join('&')}&page=${page}`;
-      const wpData = await this.getFromWordPress(endpoint);
+        if (wpResponse.status === 400 || wpResponse.status === 404) {
+          if (page === 1) {
+            return null;
+          }
 
-      if (!Array.isArray(wpData) || wpData.length === 0) {
-        hasMore = false;
-        break;
+          break;
+        }
+
+        if (wpResponse.status !== 200) {
+          return null;
+        }
+
+        const wpData = wpResponse.data;
+
+        if (!Array.isArray(wpData)) {
+          return null;
+        }
+
+        if (wpData.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        wpData.forEach((item) => {
+          if (item && item.id !== undefined && item.id !== null && !itemsById.has(item.id)) {
+            itemsById.set(item.id, item);
+          }
+        });
+
+        page++;
       }
 
-      wpData.forEach((item) => {
-        if (item && item.id !== undefined && item.id !== null && !itemsById.has(item.id)) {
-          itemsById.set(item.id, item);
-        }
-      });
+      return [...itemsById.values()];
+    };
 
-      page++;
+    const preferEdit = this.hasWordPressAuth();
+    const primary = await collect(preferEdit);
+    if (primary !== null) return primary;
+
+    if (preferEdit) {
+      console.log('ℹ️  Fallback WordPress sem auth (view/publish)');
+      const fallback = await collect(false);
+      return fallback || [];
     }
 
-    return [...itemsById.values()];
+    return [];
   }
 
   /**
@@ -115,17 +142,26 @@ class SyncService {
    * 🔄 Sincronizar TUDO
    */
   async syncAll() {
+    if (this.isSyncing) {
+      console.log('⚠️  Sincronização já em execução - ignorando ciclo sobreposto');
+      return;
+    }
+
+    this.isSyncing = true;
     try {
       console.log(`⏱️  Sincronização iniciada às ${new Date().toLocaleTimeString('pt-PT')}`);
       
       await Promise.all([
         this.syncFichas(),
-        this.syncClients()
+        this.syncClients(),
+        this.syncPages()
       ]);
       
       console.log(`✅ Sincronização completa às ${new Date().toLocaleTimeString('pt-PT')}`);
     } catch (error) {
       console.error('❌ Erro geral de sincronização:', error.message);
+    } finally {
+      this.isSyncing = false;
     }
   }
 
@@ -135,39 +171,16 @@ class SyncService {
   async syncFichas() {
     try {
       const allFichas = await this.fetchWordPressCollection('/wp/v2/fichas');
-      const canReadAllStatuses = this.hasWordPressAuth();
-
-      if (!canReadAllStatuses) {
-        console.log('ℹ️  Sync sem credenciais WP: apenas fichas publicadas podem ser lidas da API.');
-      }
 
       if (allFichas.length === 0) {
         console.log('ℹ️  Nenhuma ficha encontrada no WordPress');
         return;
       }
 
-      const changed = allFichas.filter(ficha => {
-        const lastModified = new Date(ficha.modified || ficha.date);
-        return !this.lastSync.fichas || lastModified > this.lastSync.fichas;
-      });
+      console.log(`📝 Sincronizando ${allFichas.length} fichas...`);
 
-      if (changed.length === 0) {
-        console.log(`✓ Fichas sem alterações (${allFichas.length} existentes)`);
-        this.lastSync.fichas = new Date();
-        return;
-      }
-
-      console.log(`📝 Atualizando ${changed.length} de ${allFichas.length} fichas...`);
-
-      for (const ficha of changed) {
+      for (const ficha of allFichas) {
         await new Promise((resolve, reject) => {
-          const statusUpdateClause = canReadAllStatuses
-            ? 'post_status = VALUES(post_status),'
-            : `post_status = CASE
-                WHEN post_status IN ('pending', 'trash', 'draft', 'private') THEN post_status
-                ELSE VALUES(post_status)
-              END,`;
-
           this.localDb.query(
             `INSERT INTO fichas (
               legacy_id, title, post_date, post_status, post_visibility, author
@@ -175,7 +188,7 @@ class SyncService {
             ON DUPLICATE KEY UPDATE
               title = VALUES(title),
               post_date = VALUES(post_date),
-              ${statusUpdateClause}
+              post_status = VALUES(post_status),
               post_visibility = VALUES(post_visibility),
               author = VALUES(author),
               updated_at = NOW()`,
@@ -190,7 +203,7 @@ class SyncService {
             (err) => {
               if (err) {
                 console.warn(`  ⚠️  Erro ao inserir ficha ${ficha.id}:`, err.message);
-                resolve();
+                reject(err);
               } else {
                 resolve();
               }
@@ -199,8 +212,37 @@ class SyncService {
         });
       }
 
+      const wpFichaIds = new Set(allFichas.map((ficha) => Number(ficha.id)));
+      const localFichaRows = await new Promise((resolve, reject) => {
+        this.localDb.query(
+          'SELECT id, legacy_id FROM fichas WHERE legacy_id IS NOT NULL',
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+
+      const orphanFichaIds = localFichaRows
+        .filter((row) => !wpFichaIds.has(Number(row.legacy_id)))
+        .map((row) => row.id);
+
+      if (orphanFichaIds.length > 0) {
+        await new Promise((resolve, reject) => {
+          this.localDb.query(
+            `DELETE FROM fichas WHERE id IN (${orphanFichaIds.map(() => '?').join(', ')})`,
+            orphanFichaIds,
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+        console.log(`🧹 Removidas ${orphanFichaIds.length} fichas órfãs`);
+      }
+
       this.lastSync.fichas = new Date();
-      console.log(`✅ ${changed.length} fichas sincronizadas`);
+      console.log(`✅ ${allFichas.length} fichas sincronizadas`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar fichas:', error.message);
     }
@@ -212,39 +254,16 @@ class SyncService {
   async syncClients() {
     try {
       const allClients = await this.fetchWordPressCollection('/wp/v2/clientes');
-      const canReadAllStatuses = this.hasWordPressAuth();
-
-      if (!canReadAllStatuses) {
-        console.log('ℹ️  Sync sem credenciais WP: apenas clientes publicados podem ser lidos da API.');
-      }
 
       if (allClients.length === 0) {
         console.log('ℹ️  Nenhum cliente encontrado');
         return;
       }
 
-      const changed = allClients.filter(client => {
-        const lastModified = new Date(client.modified || client.date);
-        return !this.lastSync.clients || lastModified > this.lastSync.clients;
-      });
+      console.log(`👥 Sincronizando ${allClients.length} clientes...`);
 
-      if (changed.length === 0) {
-        console.log(`✓ Clientes sem alterações (${allClients.length} existentes)`);
-        this.lastSync.clients = new Date();
-        return;
-      }
-
-      console.log(`👥 Atualizando ${changed.length} de ${allClients.length} clientes...`);
-
-      for (const client of changed) {
+      for (const client of allClients) {
         await new Promise((resolve, reject) => {
-          const statusUpdateClause = canReadAllStatuses
-            ? 'estado = VALUES(estado),'
-            : `estado = CASE
-                WHEN estado IN ('pending', 'trash', 'draft', 'private') THEN estado
-                ELSE VALUES(estado)
-              END,`;
-
           this.localDb.query(
             `INSERT INTO clients (
               legacy_id, denominacao_fiscal, contacto_empresa, author, estado, visibilidade, publicado_em, created_at, updated_at
@@ -253,7 +272,7 @@ class SyncService {
               denominacao_fiscal = VALUES(denominacao_fiscal),
               contacto_empresa = VALUES(contacto_empresa),
               author = VALUES(author),
-              ${statusUpdateClause}
+              estado = VALUES(estado),
               visibilidade = VALUES(visibilidade),
               publicado_em = VALUES(publicado_em),
               updated_at = NOW()`,
@@ -267,8 +286,12 @@ class SyncService {
               client.date || null
             ],
             (err) => {
-              if (err) reject(err);
-              else resolve();
+              if (err) {
+                console.warn(`  ⚠️  Erro ao inserir cliente ${client.id}:`, err.message);
+                reject(err);
+              } else {
+                resolve();
+              }
             }
           );
         });
@@ -304,7 +327,7 @@ class SyncService {
       }
 
       this.lastSync.clients = new Date();
-      console.log(`✅ ${changed.length} clientes sincronizados`);
+      console.log(`✅ ${allClients.length} clientes sincronizados`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar clientes:', error.message);
     }
@@ -315,43 +338,49 @@ class SyncService {
    */
   async syncPages() {
     try {
-      const allPages = await this.fetchWordPressCollection('/wp/v2/pages', ['publish', 'pending', 'draft', 'private']);
+      const allPages = await this.fetchWordPressCollection('/wp/v2/pages');
 
       if (allPages.length === 0) {
         console.log('ℹ️  Nenhuma página encontrada');
         return;
       }
 
-      const changed = allPages.filter(page => {
-        const lastModified = new Date(page.modified || page.date);
-        return !this.lastSync.pages || lastModified > this.lastSync.pages;
-      });
+      console.log(`📄 Sincronizando ${allPages.length} páginas...`);
 
-      if (changed.length === 0) {
-        console.log(`✓ Páginas sem alterações (${allPages.length} existentes)`);
-        this.lastSync.pages = new Date();
-        return;
-      }
-
-      console.log(`📄 Atualizando ${changed.length} de ${allPages.length} páginas...`);
-
-      for (const page of changed) {
+      for (const page of allPages) {
         await new Promise((resolve, reject) => {
           this.localDb.query(
-            `INSERT INTO paginas (
-              id, title, content, post_date, post_status
-            ) VALUES (?, ?, ?, ?, ?)
+            `INSERT INTO wp_posts (
+              ID, post_author, post_date, post_date_gmt, post_content, post_title,
+              post_status, post_name, post_modified, post_modified_gmt, post_parent,
+              menu_order, post_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
-              title = VALUES(title),
-              content = VALUES(content),
+              post_author = VALUES(post_author),
               post_date = VALUES(post_date),
-              post_status = VALUES(post_status)`,
+              post_date_gmt = VALUES(post_date_gmt),
+              post_content = VALUES(post_content),
+              post_title = VALUES(post_title),
+              post_status = VALUES(post_status),
+              post_modified = VALUES(post_modified),
+              post_modified_gmt = VALUES(post_modified_gmt),
+              post_parent = VALUES(post_parent),
+              menu_order = VALUES(menu_order),
+              post_type = VALUES(post_type)`,
             [
               page.id,
-              page.title?.rendered || page.title || 'Sem título',
+              Number(page.author) || 1,
+              page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              page.date_gmt || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
               page.content?.rendered || '',
-              page.date,
-              page.status
+              page.title?.rendered || page.title || 'Sem título',
+              page.status || 'publish',
+              page.slug || `page-${page.id}`,
+              page.modified || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              page.modified_gmt || page.modified || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              Number(page.parent) || 0,
+              Number(page.menu_order) || 0,
+              'page'
             ],
             (err) => {
               if (err) reject(err);
@@ -361,8 +390,37 @@ class SyncService {
         });
       }
 
+      const wpPageIds = new Set(allPages.map((page) => Number(page.id)));
+      const localPageRows = await new Promise((resolve, reject) => {
+        this.localDb.query(
+          `SELECT ID FROM wp_posts WHERE post_type = 'page'`,
+          (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows || []);
+          }
+        );
+      });
+
+      const orphanPageIds = localPageRows
+        .map((row) => Number(row.ID))
+        .filter((id) => !wpPageIds.has(id));
+
+      if (orphanPageIds.length > 0) {
+        await new Promise((resolve, reject) => {
+          this.localDb.query(
+            `DELETE FROM wp_posts WHERE ID IN (${orphanPageIds.map(() => '?').join(', ')}) AND post_type = 'page'`,
+            orphanPageIds,
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+        console.log(`🧹 Removidas ${orphanPageIds.length} páginas órfãs`);
+      }
+
       this.lastSync.pages = new Date();
-      console.log(`✅ ${changed.length} páginas sincronizadas`);
+      console.log(`✅ ${allPages.length} páginas sincronizadas`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar páginas:', error.message);
     }
@@ -379,8 +437,23 @@ class SyncService {
 
       // Buscar todas as páginas de utilizadores
       while (hasMore) {
-        const wpData = await this.getFromWordPress(`/wp/v2/users?per_page=100&page=${page}`);
-        if (!wpData || wpData.length === 0) {
+        const response = await this.getFromWordPressResponse(`/wp/v2/users?per_page=100&page=${page}`);
+
+        if (response.status === 400 || response.status === 404) {
+          if (page === 1) {
+            break;
+          }
+
+          break;
+        }
+
+        if (response.status !== 200) {
+          break;
+        }
+
+        const wpData = response.data;
+
+        if (!Array.isArray(wpData) || wpData.length === 0) {
           hasMore = false;
           break;
         }
@@ -434,6 +507,17 @@ class SyncService {
    * 🌐 Fazer GET ao WordPress via REST API
    */
   async getFromWordPress(endpoint) {
+    const response = await this.getFromWordPressResponse(endpoint);
+
+    if (response.status !== 200) {
+      console.log(`  ⚠️  API respondeu com status ${response.status}`);
+      return null;
+    }
+
+    return response.data;
+  }
+
+  async getFromWordPressResponse(endpoint) {
     try {
       const url = `${this.wpApiUrl}${endpoint}`;
       console.log(`  🔗 Fetching: ${url}`);
@@ -446,13 +530,12 @@ class SyncService {
 
       if (response.status !== 200) {
         console.log(`  ⚠️  API respondeu com status ${response.status}`);
-        return null;
       }
 
-      return response.data;
+      return { status: response.status, data: response.data };
     } catch (error) {
       console.error(`  ❌ Erro ao aceder WordPress (${endpoint}):`, error.message);
-      return null;
+      return { status: 0, data: null };
     }
   }
 

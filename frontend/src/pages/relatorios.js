@@ -227,6 +227,18 @@ export default function Relatorios({ user = null }) {
 
   const normalizedRole = normalizeRole(user?.role);
   const isCurrentUserPrivileged = normalizedRole === 'contributor' || normalizedRole === 'admin';
+  const allGestorNames = useMemo(() => {
+    const fromComerciais = comerciais
+      .map((item) => cleanManagerName(item.label || item.display_name || item.username || item.value || ''))
+      .filter((name) => name && name !== '—');
+
+    const fromFichas = fichas
+      .map((ficha) => getGestor(ficha))
+      .filter((name) => name && name !== '—');
+
+    return [...new Set([...fromComerciais, ...fromFichas])].sort((a, b) => a.localeCompare(b, 'pt'));
+  }, [comerciais, fichas]);
+
   const currentUserIdentityKeys = useMemo(() => {
     const keys = new Set();
     [
@@ -247,7 +259,7 @@ export default function Relatorios({ user = null }) {
   }, [user]);
 
   const visibleFichas = (() => {
-    if (isCurrentUserPrivileged) return fichas;
+    if (!user || isCurrentUserPrivileged) return fichas;
 
     return fichas.filter((ficha) => {
       const candidates = [
@@ -313,20 +325,12 @@ export default function Relatorios({ user = null }) {
   })();
 
   const gestorOptions = (() => {
-    if (!isCurrentUserPrivileged) {
-      const own = [...new Set(visibleFichas
-        .map((ficha) => getGestor(ficha))
-        .filter((name) => name && name !== '—'))]
+    const source = allGestorNames.length
+      ? allGestorNames
+      : [...new Set(visibleFichas.map((ficha) => getGestor(ficha)).filter((name) => name && name !== '—'))]
         .sort((a, b) => a.localeCompare(b, 'pt'));
-      return own.length ? own : ['Todos'];
-    }
 
-    const allManagers = visibleFichas
-      .map((ficha) => getGestor(ficha))
-      .filter(Boolean);
-
-    const unique = [...new Set(allManagers)].sort((a, b) => a.localeCompare(b, 'pt'));
-    return ['Todos', ...unique];
+    return source.length ? ['Todos', ...source] : ['Todos'];
   })();
 
   useEffect(() => {
@@ -339,11 +343,17 @@ export default function Relatorios({ user = null }) {
     }
   }, [isCurrentUserPrivileged, gestorOptions, gestor, submittedGC.gestor]);
 
+  useEffect(() => {
+    if (tipo === 'gestor-e-clientes') {
+      setShowGestorClientes(true);
+    }
+  }, [tipo]);
+
   const propostasFiltradas = (() => {
     const byTipo = visibleFichas.filter((ficha) => hasProposta(ficha));
     const byEstado = tipo === 'propostas-adjudicadas'
       ? byTipo.filter((ficha) => isAdjudicada(ficha) && hasFinancialContact(ficha))
-      : byTipo;
+      : byTipo.filter((ficha) => !isAdjudicada(ficha));
     const byCliente = (tipo === 'propostas-adjudicadas' ? submittedClienteAdj : submittedClienteProp) === 'Todos'
       ? byEstado
       : byEstado.filter((ficha) => getClienteNome(ficha) === (tipo === 'propostas-adjudicadas' ? submittedClienteAdj : submittedClienteProp));
@@ -370,12 +380,12 @@ export default function Relatorios({ user = null }) {
 
   const contactosFiltrados = (() => {
     const contactosBase = visibleFichas.filter((ficha) => {
-      const data = ficha.data_proximo_contacto || ficha.data_contacto;
+      const data = ficha.data_proximo_contacto;
       return !!toDateOnly(data);
     });
 
     const filtrados = submittedDataContactos
-      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto || ficha.data_contacto) === submittedDataContactos)
+      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto) === submittedDataContactos)
       : contactosBase;
 
     return filtrados
@@ -417,15 +427,14 @@ export default function Relatorios({ user = null }) {
       contactoDesmarcado: getSummaryFlag(ficha, ['contacto_desmarcado', 'contactoDesmarcado'])
     }));
 
-    const filtered = base.filter((item) => {
-      const byGestor = submittedGC.gestor === 'Todos'
-        ? true
-        : normalizeKey(item.gestorNome) === normalizeKey(submittedGC.gestor);
-      const byCliente = submittedGC.cliente === 'Todos' ? true : item.clienteNome === submittedGC.cliente;
-
-      const byDataInicio = !submittedGC.dataInicio ? true : (item.dataContacto && item.dataContacto >= submittedGC.dataInicio);
-      const byDataFim = !submittedGC.dataFim ? true : (item.dataContacto && item.dataContacto <= submittedGC.dataFim);
-
+    const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
+    
+    const filtered = base.filter(item => {
+      const byGestor = subGestor === 'Todos' ? true : normalizeKey(item.gestorNome) === normalizeKey(subGestor);
+      const byCliente = subCliente === 'Todos' ? true : item.clienteNome === subCliente;
+      const byDataInicio = !subDataInicio ? true : (item.dataContacto && item.dataContacto >= subDataInicio);
+      const byDataFim = !subDataFim ? true : (item.dataContacto && item.dataContacto <= subDataFim);
+      
       return byGestor && byCliente && byDataInicio && byDataFim;
     });
 
@@ -436,7 +445,7 @@ export default function Relatorios({ user = null }) {
       if (d !== 0) return d;
       return a.fichaTitulo.localeCompare(b.fichaTitulo, 'pt');
     });
-  })();
+  }, [visibleFichas, submittedGC]);
 
   const gestorClientesAgrupadosPorGestor = useMemo(() => {
     const groups = new Map();
@@ -932,7 +941,16 @@ export default function Relatorios({ user = null }) {
 function ResultadosPropostas({ clienteSelecionado, pesquisa, setPesquisa, grupos, expandedDatasPropostas, setExpandedDatasPropostas, onOpenFicha, getFichaId, getPropostaTitulo, getClienteNome }) {
   if (!clienteSelecionado) return null;
 
-  const itens = grupos.flatMap((grupo) => grupo.items);
+  const gruposFiltrados = grupos
+    .map((grupo) => ({
+      ...grupo,
+      items: clienteSelecionado === 'Todos'
+        ? grupo.items
+        : grupo.items.filter((ficha) => getClienteNome(ficha) === clienteSelecionado)
+    }))
+    .filter((grupo) => grupo.items.length > 0);
+
+  const itens = gruposFiltrados.flatMap((grupo) => grupo.items);
 
   return (
     <div style={{ marginTop: 18 }}>
@@ -952,7 +970,7 @@ function ResultadosPropostas({ clienteSelecionado, pesquisa, setPesquisa, grupos
         <p>Sem resultados para os filtros atuais.</p>
       ) : (
         <div style={listStyle}>
-          {grupos.map((grupo) => (
+          {gruposFiltrados.map((grupo) => (
             <div key={`prop-data-${grupo.dateKey}`} style={dateSectionStyle}>
               <button
                 type="button"
@@ -1038,5 +1056,3 @@ const gcControlStyle = {
   boxSizing: 'border-box',
   background: '#fff'
 };
-
-

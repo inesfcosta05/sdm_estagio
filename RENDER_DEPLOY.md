@@ -119,6 +119,8 @@ FRONTEND_URLS=https://projeto-fichas-frontend.onrender.com,https://www.projeto-f
 WP_API_URL=https://seusite.com/wp-json
 ```
 
+O backend também aceita `DB_PASS` se preferires manter a nomenclatura antiga, mas no Render a configuração acima fica mais consistente com o resto da documentação.
+
 ### 3.4. Deploy
 
 Render vai automaticamente:

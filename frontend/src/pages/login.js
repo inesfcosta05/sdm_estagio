@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Alert, Button, Card, Form } from 'react-bootstrap';
 import { useLocation, useNavigate } from 'react-router-dom';
-import axios from 'axios';
 import { apiFetch } from '../api';
 
 const Login = ({ onLogin, language = 'default' }) => {
@@ -47,10 +46,16 @@ const Login = ({ onLogin, language = 'default' }) => {
     const derivedUsername = isEmail ? (input.split('@')[0] || 'utilizador') : input;
 
     const fetchProfile = async (loginValue) => {
-      const response = await axios.get('/api/perfil', {
-        params: { login: loginValue }
-      });
-      return response?.data || null;
+      const res = await apiFetch(`/api/perfil?login=${encodeURIComponent(loginValue)}`);
+      if (!res.ok) {
+        const status = res.status;
+        const text = await res.text().catch(() => '');
+        const err = new Error(`HTTP ${status}: ${text}`);
+        err.status = status;
+        throw err;
+      }
+      const data = await res.json().catch(() => null);
+      return data || null;
     };
 
     try {
@@ -59,7 +64,7 @@ const Login = ({ onLogin, language = 'default' }) => {
       try {
         p = await fetchProfile(input);
       } catch (err) {
-        if (!(err?.response && err.response.status === 404)) {
+        if (err?.status !== 404) {
           throw err;
         }
       }
@@ -68,7 +73,7 @@ const Login = ({ onLogin, language = 'default' }) => {
         try {
           p = await fetchProfile(derivedUsername);
         } catch (err) {
-          if (!(err?.response && err.response.status === 404)) {
+          if (err?.status !== 404) {
             throw err;
           }
         }
