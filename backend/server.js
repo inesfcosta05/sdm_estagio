@@ -135,6 +135,262 @@ const normalizeUserRole = (role) => {
 
 const isAdminRole = (role) => normalizeUserRole(role) === 'admin';
 
+const PHPASS_ITOA64 = './0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+
+const sha256Hex = (value) => crypto.createHash('sha256').update((value || '').toString(), 'utf8').digest('hex');
+
+const encodePhpass64 = (inputBuffer, count) => {
+  let output = '';
+  let index = 0;
+
+  do {
+    let value = inputBuffer[index++];
+    output += PHPASS_ITOA64[value & 0x3f];
+
+    if (index < count) {
+      value |= inputBuffer[index] << 8;
+    }
+    output += PHPASS_ITOA64[(value >> 6) & 0x3f];
+
+    if (index++ >= count) {
+      break;
+    }
+
+    if (index < count) {
+      value |= inputBuffer[index] << 16;
+    }
+    output += PHPASS_ITOA64[(value >> 12) & 0x3f];
+
+    if (index++ >= count) {
+      break;
+    }
+
+    output += PHPASS_ITOA64[(value >> 18) & 0x3f];
+  } while (index < count);
+
+  return output;
+};
+
+const verifyPhpassPassword = (password, storedHash) => {
+  const hash = (storedHash || '').toString().trim();
+  if (!hash || !(hash.startsWith('$P$') || hash.startsWith('$H$')) || hash.length < 34) {
+    return false;
+  }
+
+  const countLog2 = PHPASS_ITOA64.indexOf(hash[3]);
+  if (countLog2 < 7 || countLog2 > 30) {
+    return false;
+  }
+
+  const salt = hash.slice(4, 12);
+  if (salt.length !== 8) {
+    return false;
+  }
+
+  const passwordBuffer = Buffer.from((password || '').toString(), 'utf8');
+  let digest = crypto.createHash('md5').update(salt, 'utf8').update(passwordBuffer).digest();
+  const iterations = 1 << countLog2;
+
+  for (let i = 0; i < iterations; i += 1) {
+    digest = crypto.createHash('md5').update(digest).update(passwordBuffer).digest();
+  }
+
+  return hash.slice(0, 12) + encodePhpass64(digest, 16) === hash;
+};
+
+const verifyStoredPassword = (password, storedHash) => {
+  const hash = (storedHash || '').toString().trim();
+  if (!hash) return false;
+
+  if (/^[0-9a-f]{64}$/i.test(hash)) {
+    return sha256Hex(password) === hash.toLowerCase();
+  }
+
+  if (hash.startsWith('$P$') || hash.startsWith('$H$')) {
+    return verifyPhpassPassword(password, hash);
+  }
+
+  return hash === (password || '').toString();
+};
+
+const parsePreferencesValue = (value) => {
+  if (!value) return {};
+  try {
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    return {};
+  }
+};
+
+const buildAuthUserFromUsersRow = (row) => {
+  const firstName = (row?.nome || '').toString();
+  const lastName = (row?.apelido || '').toString();
+  const displayName = (row?.nome_mostrado || `${firstName} ${lastName}`.trim() || row?.name || row?.email || '').toString();
+
+  return {
+    id: row.id,
+    username: (row.name || row.email || '').toString(),
+    name: displayName,
+    displayName,
+    firstName,
+    lastName,
+    nickname: (row.alcunha || row.name || '').toString(),
+    bio: (row.bio || '').toString(),
+    site: (row.site_url || '').toString(),
+    email: (row.email || '').toString(),
+    avatarUrl: (row.imagem_url || '').toString(),
+    role: normalizeUserRole(row.role),
+    preferences: parsePreferencesValue(row.preferences)
+  };
+};
+
+const buildAuthUserFromWpRow = (row) => ({
+  id: row.ID,
+  username: (row.user_login || '').toString(),
+  name: (row.display_name || row.user_login || '').toString(),
+  displayName: (row.display_name || row.user_login || '').toString(),
+  firstName: '',
+  lastName: '',
+  nickname: (row.display_name || row.user_login || '').toString(),
+  bio: '',
+  site: '',
+  email: (row.user_email || '').toString(),
+  avatarUrl: '',
+  role: 'editor',
+  preferences: {}
+});
+
+const createSessionForUser = (userId, req, cb) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  const ua = req.headers['user-agent'] || '';
+  const ip = req.ip || '';
+
+  db.query(
+    'INSERT INTO sessions (user_id, token, user_agent, ip) VALUES (?, ?, ?, ?)',
+    [userId, token, ua, ip],
+    (err) => {
+      if (err) return cb(err);
+      return cb(null, token);
+    }
+  );
+};
+
+const findUserForLogin = (login, cb) => {
+  const normalizedLogin = (login || '').toString().trim();
+  if (!normalizedLogin) return cb(new Error('login required'));
+
+  const queryWpUsers = () => {
+    db.query(
+      `SELECT ID AS id, user_login AS username, user_email AS email, display_name AS displayName, user_pass AS password_hash
+       FROM wp_users
+       WHERE LOWER(user_login) = LOWER(?) OR LOWER(user_email) = LOWER(?) OR LOWER(display_name) = LOWER(?)
+       LIMIT 1`,
+      [normalizedLogin, normalizedLogin, normalizedLogin],
+      (wpErr, wpRows) => {
+        if (wpErr) return cb(wpErr);
+        if (!wpRows || !wpRows.length) return cb(null, null);
+        return cb(null, { source: 'wp_users', user: wpRows[0] });
+      }
+    );
+  };
+
+  db.query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`,
+    (colErr, colRows) => {
+      if (colErr) return queryWpUsers();
+
+      const existingCols = (colRows || []).map((row) => row.COLUMN_NAME);
+      const has = (col) => existingCols.includes(col);
+
+      const selectCols = ['id', 'name', 'email', 'role', 'password_hash'];
+      if (has('nome')) selectCols.push('nome');
+      if (has('apelido')) selectCols.push('apelido');
+      if (has('alcunha')) selectCols.push('alcunha');
+      if (has('nome_mostrado')) selectCols.push('nome_mostrado');
+      if (has('bio')) selectCols.push('bio');
+      if (has('site_url')) selectCols.push('site_url');
+      if (has('imagem_url')) selectCols.push('imagem_url');
+      if (has('preferences')) selectCols.push('preferences');
+
+      const whereParts = ['LOWER(name) = LOWER(?)', 'LOWER(email) = LOWER(?)'];
+      const whereParams = [normalizedLogin, normalizedLogin];
+      if (has('alcunha')) { whereParts.push('LOWER(alcunha) = LOWER(?)'); whereParams.push(normalizedLogin); }
+      if (has('nome_mostrado')) { whereParts.push('LOWER(nome_mostrado) = LOWER(?)'); whereParams.push(normalizedLogin); }
+      if (has('nome')) { whereParts.push('LOWER(nome) = LOWER(?)'); whereParams.push(normalizedLogin); }
+
+      const sql = `SELECT ${selectCols.join(', ')} FROM users WHERE ${whereParts.join(' OR ')} LIMIT 1`;
+
+      db.query(sql, whereParams, (userErr, users) => {
+        if (userErr) {
+          if (userErr.code === 'ER_NO_SUCH_TABLE' || userErr.errno === 1146 || userErr.code === 'ER_BAD_FIELD_ERROR' || userErr.errno === 1054) {
+            return queryWpUsers();
+          }
+          return cb(userErr);
+        }
+        if (users && users.length) return cb(null, { source: 'users', user: users[0] });
+        return queryWpUsers();
+      });
+    }
+  );
+};
+
+app.post('/api/login', (req, res) => {
+  const login = (req.body?.login || '').toString().trim();
+  const password = (req.body?.password || '').toString();
+
+  if (!login || !password) {
+    return res.status(400).json({ error: 'login e password são obrigatórios' });
+  }
+
+  findUserForLogin(login, (err, result) => {
+    if (err) {
+      console.error('POST /api/login erro:', err.message);
+      return res.status(500).json({ error: 'Erro ao autenticar utilizador' });
+    }
+
+    if (!result) {
+      return res.status(401).json({ error: 'Utilizador ou password inválidos' });
+    }
+
+    const { source, user } = result;
+    const storedHash = user.password_hash || '';
+
+    if (!verifyStoredPassword(password, storedHash)) {
+      return res.status(401).json({ error: 'Utilizador ou password inválidos' });
+    }
+
+    const authUser = source === 'users'
+      ? buildAuthUserFromUsersRow(user)
+      : buildAuthUserFromWpRow(user);
+
+    if (source === 'users') {
+      return createSessionForUser(user.id, req, (sessionErr, token) => {
+        if (sessionErr) {
+          console.error('POST /api/login sessão:', sessionErr.message);
+          return res.status(500).json({ error: 'Erro ao criar sessão' });
+        }
+
+        return res.json({
+          success: true,
+          authUser: {
+            ...authUser,
+            sessionToken: token
+          }
+        });
+      });
+    }
+
+    return res.json({
+      success: true,
+      authUser: {
+        ...authUser,
+        sessionToken: ''
+      }
+    });
+  });
+});
+
 const resolveUserByLogin = (login, cb) => {
   const normalizedLogin = (login || '').toString().trim();
   if (!normalizedLogin) return cb(new Error('login required'));

@@ -35,6 +35,7 @@ const Login = ({ onLogin, language = 'default' }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError('');
 
     if (!username.trim() || !password.trim()) {
       setError(t.fill);
@@ -42,81 +43,44 @@ const Login = ({ onLogin, language = 'default' }) => {
     }
 
     const input = username.trim();
-    const isEmail = input.includes('@');
-    const derivedUsername = isEmail ? (input.split('@')[0] || 'utilizador') : input;
-
-    const fetchProfile = async (loginValue) => {
-      const res = await apiFetch(`/api/perfil?login=${encodeURIComponent(loginValue)}`);
-      if (!res.ok) {
-        const status = res.status;
-        const text = await res.text().catch(() => '');
-        const err = new Error(`HTTP ${status}: ${text}`);
-        err.status = status;
-        throw err;
-      }
-      const data = await res.json().catch(() => null);
-      return data || null;
-    };
 
     try {
-      let p = null;
+      const response = await apiFetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: input, password })
+      });
 
-      try {
-        p = await fetchProfile(input);
-      } catch (err) {
-        if (err?.status !== 404) {
-          throw err;
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 404) {
+          setError(t.invalid);
+          return;
         }
+
+        if (response.status === 400) {
+          setError(data?.error || t.fill);
+          return;
+        }
+
+        throw new Error(data?.error || `HTTP ${response.status}`);
       }
 
-      if (!p && derivedUsername && derivedUsername !== input) {
-        try {
-          p = await fetchProfile(derivedUsername);
-        } catch (err) {
-          if (err?.status !== 404) {
-            throw err;
-          }
-        }
-      }
-
-      if (!p) {
-        setError(t.invalid);
+      const authUser = data?.authUser;
+      if (!authUser) {
+        setError(t.unavailable);
         return;
       }
 
-      let sessionToken = '';
-      try {
-        const sessionRes = await apiFetch('/api/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ login: input })
-        });
-        const sessionData = await sessionRes.json();
-        if (sessionRes.ok && sessionData?.token) {
-          sessionToken = sessionData.token;
-        }
-      } catch {
-        // Sem token de sessão, mantém login local e tenta validar depois.
-      }
-
-      const authUser = {
-        id: p.id,
-        username: p.username || derivedUsername,
-        name: p.displayName || derivedUsername,
-        displayName: p.displayName || derivedUsername,
-        firstName: p.firstName || '',
-        lastName: p.lastName || '',
-        nickname: p.nickname || p.username || derivedUsername,
-        bio: p.bio || '',
-        site: p.site || '',
-        email: p.email || (isEmail ? input : ''),
-        avatarUrl: p.avatarUrl || '',
-        sessionToken,
-        role: p.role || 'editor'
-      };
-
       if (typeof onLogin === 'function') {
-        onLogin(authUser);
+        onLogin({
+          ...authUser,
+          username: authUser.username || input,
+          name: authUser.name || authUser.displayName || input,
+          displayName: authUser.displayName || authUser.name || input,
+          email: authUser.email || (input.includes('@') ? input : '')
+        });
       }
 
       navigate('/', { replace: true });
