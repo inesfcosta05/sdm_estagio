@@ -110,8 +110,10 @@ const Login = ({ onLogin, language = 'default' }) => {
 
           <Form onSubmit={handleSubmit}>
             <Form.Group className="mb-3">
-              <Form.Label>{t.usernameLabel}</Form.Label>
+              <Form.Label htmlFor="login-username">{t.usernameLabel}</Form.Label>
               <Form.Control
+                id="login-username"
+                name="username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -120,8 +122,10 @@ const Login = ({ onLogin, language = 'default' }) => {
             </Form.Group>
 
             <Form.Group className="mb-3">
-              <Form.Label>{t.password}</Form.Label>
+              <Form.Label htmlFor="login-password">{t.password}</Form.Label>
               <Form.Control
+                id="login-password"
+                name="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
