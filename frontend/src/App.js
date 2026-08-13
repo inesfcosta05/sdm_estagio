@@ -565,7 +565,7 @@ function AppContent() {
               prefs={prefs}
             />
           ) : (
-            <Navigate to="/login" replace />
+             <Login onLogin={handleLogin} language={language} />
           )
         }
       />
