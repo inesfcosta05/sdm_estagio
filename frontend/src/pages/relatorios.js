@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -40,6 +40,7 @@ const isAdjudicada = (ficha) => {
   if (estado.includes('adjud')) return true;
   if ((ficha.servicos_adjudicados || '').toString().trim()) return true;
   if ((ficha.valor_total_adjudicado || '').toString().trim()) return true;
+  if (hasKeyword(getReportBlob(ficha), /adjudic|aceit|fechad|confirmad/i)) return true;
   return false;
 };
 
@@ -47,7 +48,23 @@ const hasProposta = (ficha) => {
   if (toDateOnly(ficha.data_apresentacao_proposta)) return true;
   if ((ficha.descritivo_proposta || '').toString().trim()) return true;
   if ((ficha.servicos_proposta || '').toString().trim()) return true;
-  return false;
+  const blob = [
+    ficha.title,
+    ficha.titulo,
+    ficha.post_title,
+    ficha.post_content,
+    ficha.estado_proposta,
+    ficha.descritivo_proposta,
+    ficha.servicos_proposta,
+    ficha.servicos_adjudicados,
+    ficha.valor_total_proposta,
+    ficha.valor_total_adjudicado
+  ]
+    .map((value) => (value || '').toString().trim())
+    .filter(Boolean)
+    .join(' ');
+
+  return hasKeyword(blob, /propost|orçament|orcament|adjudic/i);
 };
 
 const cleanReportText = (value) => {
@@ -85,6 +102,27 @@ const cleanManagerName = (value) => {
 
   return raw;
 };
+
+const getReportBlob = (ficha) => [
+  ficha.title,
+  ficha.titulo,
+  ficha.post_title,
+  ficha.post_content,
+  ficha.estado_proposta,
+  ficha.descritivo_proposta,
+  ficha.servicos_proposta,
+  ficha.servicos_adjudicados,
+  ficha.motivo_resumo_contacto,
+  ficha.motivo_tipo_proximo_contacto,
+  ficha.tipo_proximo_contacto,
+  ficha.contacto_efetuado,
+  ficha.follow_up,
+  ficha.novo_contacto,
+  ficha.assunto_tratado
+]
+  .map((value) => (value || '').toString().trim())
+  .filter(Boolean)
+  .join(' ');
 
 const hasKeyword = (text, pattern) => pattern.test((text || '').toString().toLowerCase());
 
@@ -151,7 +189,7 @@ export default function Relatorios({ user = null }) {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([
+    const fetchAll = () => Promise.all([
       axios.get('/api/fichas').catch(() => ({ data: [] })),
       axios.get('/api/clientes').catch(() => ({ data: [] })),
       axios.get('/api/comerciais').catch(() => ({ data: [] }))
@@ -161,10 +199,22 @@ export default function Relatorios({ user = null }) {
       setClientes(Array.isArray(cRes.data) ? cRes.data : []);
       setComerciais(Array.isArray(mRes.data) ? mRes.data : []);
       setLoading(false);
+    }).catch(() => {
+      if (!mounted) return;
+      setFichas([]);
+      setClientes([]);
+      setComerciais([]);
+      setLoading(false);
     });
+
+    // initial fetch
+    fetchAll();
+    // poll every 60s to keep reports updated
+    const intervalId = setInterval(fetchAll, 60 * 1000);
 
     return () => {
       mounted = false;
+      clearInterval(intervalId);
     };
   }, []);
 
@@ -176,9 +226,17 @@ export default function Relatorios({ user = null }) {
         cliente.legacy_id,
         cliente.client_legacy_id,
         cliente.client_id,
+        cliente.cliente_id,
         cliente.denominacao_fiscal,
         cliente.nome,
-        cliente.client_name
+        cliente.client_name,
+        cliente.cliente,
+        cliente.client,
+        cliente.nome_cliente,
+        cliente.cliente_nome,
+        cliente.nomeCliente,
+        cliente.contacto_empresa,
+        cliente.pessoa_contacto_nome
       ]
         .filter((value) => value !== undefined && value !== null && value !== '')
         .forEach((value) => map.set(normalizeKey(value), cliente));
@@ -186,8 +244,10 @@ export default function Relatorios({ user = null }) {
     return map;
   }, [clientes]);
 
+  const getClienteRaw = (ficha) => ficha.cliente || ficha.cliente_nome || ficha.clienteNome || ficha.nome_cliente || ficha.nomeCliente || ficha.client_name || ficha.client || ficha.denominacao_fiscal || ficha.client_legacy_id || ficha.cliente_legacy_id || ficha.client_id || ficha.cliente_id || ficha.nome || ficha.title || ficha.post_title;
+
   const getClienteNome = (ficha) => {
-    const raw = ficha.cliente || ficha.nome_cliente || ficha.cliente_nome || ficha.client_name || ficha.denominacao_fiscal || ficha.client_legacy_id || ficha.client_id;
+    const raw = getClienteRaw(ficha);
     if (raw === undefined || raw === null || raw === '') return '—';
     const mapped = clienteByAnyKey.get(normalizeKey(raw));
     const nome = mapped?.denominacao_fiscal || mapped?.nome || raw;
@@ -195,7 +255,7 @@ export default function Relatorios({ user = null }) {
   };
 
   const getClienteId = (ficha) => {
-    const raw = ficha.cliente || ficha.nome_cliente || ficha.cliente_nome || ficha.client_name || ficha.denominacao_fiscal || ficha.client_legacy_id || ficha.client_id;
+    const raw = getClienteRaw(ficha);
     const mapped = clienteByAnyKey.get(normalizeKey(raw));
     if (!mapped && raw) {
       const byName = clientes.find((cliente) => {
@@ -210,23 +270,47 @@ export default function Relatorios({ user = null }) {
   const gestorMap = useMemo(() => {
     const map = new Map();
     comerciais.forEach((item) => {
-      const label = cleanManagerName(item.label || item.display_name || item.username || item.value || '');
+      const label = cleanManagerName(item.label || item.display_name || item.username || item.value || item.name || item.displayName || '');
       if (!label) return;
-      [item.value, item.username, item.id, label, item.label, item.display_name]
+      [item.value, item.username, item.id, label, item.label, item.display_name, item.name, item.displayName, item.user_nicename]
         .filter((value) => value !== undefined && value !== null && value !== '')
         .forEach((value) => map.set(normalizeKey(cleanManagerName(value)), label));
     });
     return map;
   }, [comerciais]);
 
-  const getGestor = (ficha) => {
-    const raw = ficha.author || ficha.autor || ficha.gestor || ficha.comercial_id || ficha.nome_autor;
-    if (!raw) return '—';
-    return gestorMap.get(normalizeKey(cleanManagerName(raw))) || cleanManagerName(raw);
-  };
+  const gestorIdMap = useMemo(() => {
+    const idMap = new Map();
+    comerciais.forEach((item) => {
+      const label = cleanManagerName(item.label || item.display_name || item.username || item.value || item.name || item.displayName || '');
+      if (!label) return;
+      if (item.id !== undefined && item.id !== null) idMap.set(String(item.id), label);
+      if (item.value !== undefined && item.value !== null) idMap.set(String(item.value), label);
+      if (item.username) idMap.set(String(item.username), label);
+    });
+    return idMap;
+  }, [comerciais]);
+
+  const getGestor = useCallback((ficha) => {
+    const candidates = [ficha.comercial_id, ficha.author, ficha.autor, ficha.gestor, ficha.nome_autor, ficha.nomeAutor, ficha.user];
+    for (const raw of candidates) {
+      if (raw === undefined || raw === null || raw === '') continue;
+      const rawStr = String(raw).trim();
+      // try id-based mapping first
+      const byId = gestorIdMap.get(rawStr);
+      if (byId) return byId;
+      // try normalized name mapping
+      const cleaned = cleanManagerName(rawStr);
+      const mapped = gestorMap.get(normalizeKey(cleaned));
+      if (mapped) return mapped;
+      // fallback to cleaned name
+      if (cleaned && cleaned !== '—') return cleaned;
+    }
+    return '—';
+  }, [gestorMap, gestorIdMap]);
 
   const normalizedRole = normalizeRole(user?.role);
-  const isCurrentUserPrivileged = normalizedRole === 'contributor' || normalizedRole === 'admin';
+  const isCurrentUserPrivileged = normalizedRole === 'editor' || normalizedRole === 'contributor' || normalizedRole === 'admin';
   const allGestorNames = useMemo(() => {
     const fromComerciais = comerciais
       .map((item) => cleanManagerName(item.label || item.display_name || item.username || item.value || ''))
@@ -237,7 +321,7 @@ export default function Relatorios({ user = null }) {
       .filter((name) => name && name !== '—');
 
     return [...new Set([...fromComerciais, ...fromFichas])].sort((a, b) => a.localeCompare(b, 'pt'));
-  }, [comerciais, fichas]);
+  }, [comerciais, fichas, getGestor]);
 
   const currentUserIdentityKeys = useMemo(() => {
     const keys = new Set();
@@ -315,12 +399,16 @@ export default function Relatorios({ user = null }) {
       sinalAgendado: hasNextContact
     };
   };
-  const hasFinancialContact = (ficha) => !!toDateOnly(ficha.data_ultimo_contacto_financeiro);
-
   const clienteOptions = (() => {
-    const names = [...new Set(visibleFichas
+    const fromFichas = visibleFichas
       .map((ficha) => getClienteNome(ficha))
-      .filter((name) => name && name !== '—'))].sort((a, b) => a.localeCompare(b, 'pt'));
+      .filter((name) => name && name !== '—');
+
+    const fromClientes = clientes
+      .map((cliente) => (cliente.denominacao_fiscal || cliente.nome || cliente.client_name || cliente.cliente_nome || cliente.nome_cliente || '').toString().trim())
+      .filter(Boolean);
+
+    const names = [...new Set([...fromFichas, ...fromClientes])].sort((a, b) => a.localeCompare(b, 'pt'));
     return ['Todos', ...names];
   })();
 
@@ -352,7 +440,7 @@ export default function Relatorios({ user = null }) {
   const propostasFiltradas = (() => {
     const byTipo = visibleFichas.filter((ficha) => hasProposta(ficha));
     const byEstado = tipo === 'propostas-adjudicadas'
-      ? byTipo.filter((ficha) => isAdjudicada(ficha) && hasFinancialContact(ficha))
+      ? byTipo.filter((ficha) => isAdjudicada(ficha))
       : byTipo.filter((ficha) => !isAdjudicada(ficha));
     const byCliente = (tipo === 'propostas-adjudicadas' ? submittedClienteAdj : submittedClienteProp) === 'Todos'
       ? byEstado
@@ -380,12 +468,12 @@ export default function Relatorios({ user = null }) {
 
   const contactosFiltrados = (() => {
     const contactosBase = visibleFichas.filter((ficha) => {
-      const data = ficha.data_proximo_contacto;
+      const data = ficha.data_proximo_contacto || ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at;
       return !!toDateOnly(data);
     });
 
     const filtrados = submittedDataContactos
-      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto) === submittedDataContactos)
+      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto || ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at) === submittedDataContactos)
       : contactosBase;
 
     return filtrados
@@ -413,7 +501,7 @@ export default function Relatorios({ user = null }) {
       gestorNome: getGestor(ficha),
       clienteNome: getClienteNome(ficha),
       clienteId: getClienteId(ficha),
-      dataContacto: toDateOnly(ficha.data_contacto || ficha.created_at || ficha.updated_at),
+      dataContacto: toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at),
       dataProximoContacto: toDateOnly(ficha.data_proximo_contacto),
       duracao: getDuracaoLabel(ficha),
       tipoContacto: asText(ficha.tipo_contacto, ficha.tipo_contato) || '—',
@@ -430,11 +518,17 @@ export default function Relatorios({ user = null }) {
     const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
     
     const filtered = base.filter(item => {
-      const byGestor = subGestor === 'Todos' ? true : normalizeKey(item.gestorNome) === normalizeKey(subGestor);
-      const byCliente = subCliente === 'Todos' ? true : item.clienteNome === subCliente;
+      const normalizedItemGestor = normalizeKey(cleanManagerName(item.gestorNome));
+      const normalizedSubGestor = normalizeKey(cleanManagerName(subGestor));
+      const byGestor = subGestor === 'Todos' ? true : normalizedItemGestor === normalizedSubGestor;
+
+      const normalizedItemCliente = normalizeKey(item.clienteNome || '');
+      const normalizedSubCliente = normalizeKey(subCliente || '');
+      const byCliente = subCliente === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
+
       const byDataInicio = !subDataInicio ? true : (item.dataContacto && item.dataContacto >= subDataInicio);
       const byDataFim = !subDataFim ? true : (item.dataContacto && item.dataContacto <= subDataFim);
-      
+
       return byGestor && byCliente && byDataInicio && byDataFim;
     });
 
@@ -451,7 +545,7 @@ export default function Relatorios({ user = null }) {
     const groups = new Map();
 
     gestorClientesFiltrados.forEach((item) => {
-      const gestorNome = item.gestorNome || 'Sem gestor';
+      const gestorNome = (cleanManagerName(item.gestorNome) === '—' ? '' : cleanManagerName(item.gestorNome)) || 'Sem gestor';
       if (!groups.has(gestorNome)) groups.set(gestorNome, []);
       groups.get(gestorNome).push(item);
     });

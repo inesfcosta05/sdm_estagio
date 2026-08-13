@@ -8,7 +8,7 @@ services:
     healthCheckPath: /health
     envVars:
       - key: FRONTEND_URLS
-        value: http://localhost:3000,https://fichas-frontend.onrender.com
+        value: http://localhost:3000,https://sdm-estagio-m1yn.onrender.com
       - key: FALLBACK_AUTH
         value: true
 
@@ -24,7 +24,7 @@ services:
       - key: GENERATE_SOURCEMAP
         value: false
       - key: REACT_APP_API_BASE_URL
-        value: https://fichas-backend.onrender.com
+        value: https://sdm-estagio.onrender.com
     routes:
       - type: rewrite
         source: /*

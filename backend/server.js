@@ -10,22 +10,21 @@ const axios = require('axios');
 const SyncService = require('./sync-service');
 
 const app = express();
-let allowedOriginsRaw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
-if (!allowedOriginsRaw) {
-  // If not set, provide a sensible default for local dev and a permissive
-  // behaviour in production to avoid accidental CORS blocks on Render.
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-    allowedOriginsRaw = '*'; // allow all origins in production when not configured
-    console.warn('⚠️ FRONTEND_URLS not set — allowing all origins (production).');
-  } else {
-    allowedOriginsRaw = 'http://localhost:3000,https://fichas-frontend.onrender.com';
-  }
-}
 
-const allowedOrigins = allowedOriginsRaw
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+// Fallback used only when FRONTEND_URLS/FRONTEND_URL isn't set on the environment.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'https://sdm-estagio-m1yn.onrender.com'
+];
+
+const normalizeOrigin = (value) => (value || '').toString().trim().replace(/\/$/, '');
+
+const allowedOriginsRaw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
+const allowedOrigins = (allowedOriginsRaw
+  ? allowedOriginsRaw.split(',')
+  : DEFAULT_ALLOWED_ORIGINS
+).map(normalizeOrigin).filter(Boolean);
+
 const dbPassword = process.env.DB_PASS || process.env.DB_PASSWORD || '';
 
 const isDevLocalOrigin = (origin) => {
@@ -50,15 +49,14 @@ app.use(
       // Log origin for easier debugging in Render logs
       try { console.debug('CORS origin:', origin); } catch (e) {}
 
-      // If allowedOrigins contains '*' allow all
-      if (allowedOrigins.includes('*')) {
+      if (!origin || allowedOrigins.includes(normalizeOrigin(origin)) || isDevLocalOrigin(origin)) {
         return callback(null, true);
       }
 
-      if (!origin || allowedOrigins.includes(origin) || isDevLocalOrigin(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error('Not allowed by CORS'));
+      console.warn(`⚠️ CORS bloqueado para origem: ${origin}`);
+      // Reject without throwing, so Express's default error handler (which strips
+      // CORS headers) never gets involved — the browser just sees a clean CORS block.
+      return callback(null, false);
     }
   })
 );
