@@ -14,9 +14,7 @@ const app = express();
 // Fallback used only when FRONTEND_URLS/FRONTEND_URL isn't set on the environment.
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
-  'https://sdm-estagio-m1yn.onrender.com'
-];
-
+  'https://sdm-estagio-m1yn.onrender.com', '*'];
 const normalizeOrigin = (value) => (value || '').toString().trim().replace(/\/$/, '');
 
 const allowedOriginsRaw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
