@@ -1810,6 +1810,105 @@ app.post('/api/setup/admin', (req, res) => {
   });
 });
 
+// ============================================
+// 🧪 DIAGNÓSTICO TEMPORÁRIO — remover depois de resolver a ligação à BD
+// Testa conectividade MySQL isoladamente, sem tocar na ligação principal.
+// ============================================
+app.get('/api/db-test', (req, res) => {
+  const expectedSecret = process.env.DB_TEST_SECRET || '';
+  const providedSecret = (req.query.secret || req.headers['x-db-test-secret'] || '').toString();
+
+  if (!expectedSecret || providedSecret !== expectedSecret) {
+    return res.status(403).json({ error: 'Não autorizado' });
+  }
+
+  const testHost = process.env.DB_HOST || 'localhost';
+  const testPort = Number(process.env.DB_PORT) || 3306;
+  const testUser = process.env.DB_USER || 'root';
+  const testPassword = process.env.DB_PASS || process.env.DB_PASSWORD || '';
+  const testDatabase = process.env.DB_NAME || 'wp_migracion';
+
+  const startedAt = Date.now();
+  const testConn = mysql.createConnection({
+    host: testHost,
+    port: testPort,
+    user: testUser,
+    password: testPassword,
+    database: testDatabase,
+    connectTimeout: 10000
+  });
+
+  let responded = false;
+  const finish = (payload) => {
+    if (responded) return;
+    responded = true;
+    try { testConn.destroy(); } catch (e) {}
+    res.json(payload);
+  };
+
+  const safetyTimer = setTimeout(() => {
+    finish({
+      success: false,
+      reason: 'timeout',
+      message: 'Sem resposta em 10s (timeout de segurança do endpoint)',
+      host: testHost,
+      port: testPort,
+      database: testDatabase,
+      durationMs: Date.now() - startedAt
+    });
+  }, 10500);
+
+  const classifyError = (err) => {
+    if (err.code === 'ETIMEDOUT' || err.code === 'PROTOCOL_SEQUENCE_TIMEOUT') return 'timeout';
+    if (err.code === 'ECONNREFUSED') return 'connection_refused';
+    if (err.code === 'ENOTFOUND' || err.code === 'EAI_AGAIN') return 'dns';
+    if (err.code === 'ER_ACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR') return 'auth';
+    if (err.code === 'ER_BAD_DB_ERROR') return 'database_not_found';
+    return 'other';
+  };
+
+  testConn.connect((err) => {
+    if (err) {
+      clearTimeout(safetyTimer);
+      return finish({
+        success: false,
+        reason: classifyError(err),
+        code: err.code || null,
+        message: err.message || 'Erro desconhecido',
+        host: testHost,
+        port: testPort,
+        database: testDatabase,
+        durationMs: Date.now() - startedAt
+      });
+    }
+
+    testConn.query('SELECT 1', (queryErr) => {
+      clearTimeout(safetyTimer);
+      if (queryErr) {
+        return finish({
+          success: false,
+          reason: 'query_failed',
+          code: queryErr.code || null,
+          message: queryErr.message,
+          host: testHost,
+          port: testPort,
+          database: testDatabase,
+          durationMs: Date.now() - startedAt
+        });
+      }
+
+      finish({
+        success: true,
+        message: 'Ligação e SELECT 1 bem sucedidos',
+        host: testHost,
+        port: testPort,
+        database: testDatabase,
+        durationMs: Date.now() - startedAt
+      });
+    });
+  });
+});
+
 // Health check endpoint (required by Render)
 app.get('/health', (req, res) => {
   db.query('SELECT 1', (err) => {
