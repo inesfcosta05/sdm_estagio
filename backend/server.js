@@ -332,14 +332,25 @@ const findUserForLogin = (login, cb) => {
 };
 
 app.post('/api/login', (req, res) => {
+  console.log('1');
+
+
+
+
+
+
+
+
+
   const login = (req.body?.login || '').toString().trim();
   const password = (req.body?.password || '').toString();
-
+  console.log('1234');
   if (!login || !password) {
     return res.status(400).json({ error: 'login e password são obrigatórios' });
   }
-
+  console.log('123');
   findUserForLogin(login, (err, result) => {
+      console.log('12');
     if (err) {
       console.error('POST /api/login erro:', err.message);
       return res.status(500).json({ error: 'Erro ao autenticar utilizador' });
