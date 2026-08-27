@@ -428,22 +428,48 @@ const assertAdminByLogin = (actingLogin, cb) => {
 // FICHAS ✅ (já funciona)
 app.get('/api/fichas', (req, res) => {
   console.log('📋 Fichas pedidas');
+
+  const AUTHOR_NAME_EXPR = `COALESCE(
+    NULLIF(TRIM(u.nome_mostrado), ''),
+    NULLIF(TRIM(CONCAT(IFNULL(u.nome, ''), ' ', IFNULL(u.apelido, ''))), ''),
+    NULLIF(TRIM(u.name), '')
+  ) AS author_name`;
+
+  const respond = (err, results) => {
+    if (err) return res.status(500).json({ error: err.message });
+    console.log(`✅ ${results.length} fichas`);
+    res.json(results);
+  };
+
+  // The client relation on legacy fichas wasn't migrated into `client_legacy_id`
+  // (it's NULL for practically every row) — the real link still lives in the
+  // WordPress Pods relationship table (`wp_podsrel`, pod "fichas" field "cliente" =
+  // pod_id 13 / field_id 15), so resolve through it, falling back to the direct
+  // column in case it's ever populated too.
   db.query(
     `SELECT f.*,
-       cl.denominacao_fiscal AS client_name,
-       COALESCE(
-         NULLIF(TRIM(u.nome_mostrado), ''),
-         NULLIF(TRIM(CONCAT(IFNULL(u.nome, ''), ' ', IFNULL(u.apelido, ''))), ''),
-         NULLIF(TRIM(u.name), '')
-       ) AS author_name
+       COALESCE(cl_direct.denominacao_fiscal, cl_pods.denominacao_fiscal) AS client_name,
+       ${AUTHOR_NAME_EXPR}
      FROM fichas f
-     LEFT JOIN clients cl ON cl.legacy_id = f.client_legacy_id
+     LEFT JOIN clients cl_direct ON cl_direct.legacy_id = f.client_legacy_id
+     LEFT JOIN wp_podsrel pr ON pr.pod_id = 13 AND pr.field_id = 15 AND pr.item_id = f.legacy_id
+     LEFT JOIN clients cl_pods ON cl_pods.legacy_id = pr.related_item_id
      LEFT JOIN users u ON u.id = CAST(NULLIF(f.author, '') AS UNSIGNED)
      ORDER BY f.data_contacto DESC`,
     (err, results) => {
-      if (err) return res.status(500).json({ error: err.message });
-      console.log(`✅ ${results.length} fichas`);
-      res.json(results);
+      if (!err) return respond(null, results);
+
+      console.warn('⚠️ Falha ao juntar wp_podsrel para resolver cliente das fichas, a usar fallback simples:', err.message);
+      db.query(
+        `SELECT f.*,
+           cl_direct.denominacao_fiscal AS client_name,
+           ${AUTHOR_NAME_EXPR}
+         FROM fichas f
+         LEFT JOIN clients cl_direct ON cl_direct.legacy_id = f.client_legacy_id
+         LEFT JOIN users u ON u.id = CAST(NULLIF(f.author, '') AS UNSIGNED)
+         ORDER BY f.data_contacto DESC`,
+        respond
+      );
     }
   );
 });
