@@ -187,18 +187,28 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
   };
 
   const renderRightBox = (boxKey) => {
-    if (boxKey === EDITOR_SLOT_KEY) {
-      return (
-        <div key={EDITOR_SLOT_KEY} style={editorWrapStyle}>
-          <RichTextEditor value={conteudo} onChange={setConteudo} disableVisualEditor={disableVisualEditor} minHeight={fullHeightEditor ? 430 : 300} />
-          <div style={editorFooterStyle}>Contagem de palavras: {wordCount(conteudo)}</div>
-        </div>
-      );
-    }
-
     const position = getBoxPosition(boxKey);
     const canMoveUp = !!position;
     const canMoveDown = !!position;
+
+    if (boxKey === EDITOR_SLOT_KEY) {
+      return (
+        <SideBox
+          key={EDITOR_SLOT_KEY}
+          title="Conteúdo"
+          onMoveUp={() => moveBoxVertically(EDITOR_SLOT_KEY, -1)}
+          onMoveDown={() => moveBoxVertically(EDITOR_SLOT_KEY, 1)}
+          onDragStart={() => setDraggedBox(EDITOR_SLOT_KEY)}
+          onDragEnd={() => setDraggedBox('')}
+          canMoveUp={canMoveUp}
+          canMoveDown={canMoveDown}
+          bodyStyle={editorBoxBodyStyle}
+        >
+          <RichTextEditor value={conteudo} onChange={setConteudo} disableVisualEditor={disableVisualEditor} minHeight={fullHeightEditor ? 430 : 300} />
+          <div style={editorFooterStyle}>Contagem de palavras: {wordCount(conteudo)}</div>
+        </SideBox>
+      );
+    }
 
     if (boxKey === 'publicar') {
       return (
@@ -414,7 +424,7 @@ function DropSlot({ active, onDrop }) {
   );
 }
 
-function SideBox({ title, children, onMoveUp, onMoveDown, onDragStart, onDragEnd, canMoveUp, canMoveDown }) {
+function SideBox({ title, children, onMoveUp, onMoveDown, onDragStart, onDragEnd, canMoveUp, canMoveDown, bodyStyle }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -427,7 +437,7 @@ function SideBox({ title, children, onMoveUp, onMoveDown, onDragStart, onDragEnd
           <button type="button" style={iconBtnStyle(true)} onClick={() => setCollapsed((v) => !v)}>{collapsed ? '▾' : '▴'}</button>
         </span>
       </div>
-      {!collapsed && <div style={{ padding: '10px 16px' }}>{children}</div>}
+      {!collapsed && <div style={bodyStyle || { padding: '10px 16px' }}>{children}</div>}
     </div>
   );
 }
@@ -441,7 +451,7 @@ const boxHeaderStyle = {
   background: '#f6f7f7', borderBottom: '1px solid #c3c4c7',
   padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
 };
-const editorWrapStyle = { border: '1px solid #c3c4c7', background: '#fff', marginBottom: 12 };
+const editorBoxBodyStyle = { padding: 0 };
 const editorFooterStyle = {
   borderTop: '1px solid #dcdcde', padding: '5px 10px',
   fontSize: '0.82rem', color: '#646970', background: '#f6f7f7',
