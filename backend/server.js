@@ -664,6 +664,24 @@ app.put('/api/fichas/:id', (req, res) => {
   });
 });
 
+// DELETE /api/fichas/:id - eliminação definitiva (a ficha já deve estar no lixo)
+app.delete('/api/fichas/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de ficha inválido' });
+  }
+  db.query('DELETE FROM fichas WHERE id = ? OR legacy_id = ?', [id, id], (err, result) => {
+    if (err) {
+      console.error('❌ ERRO delete ficha:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    if (!result.affectedRows) {
+      return res.status(404).json({ error: 'Ficha não encontrada' });
+    }
+    return res.json({ success: true });
+  });
+});
+
 // CLIENTES ✅ **CORRIGIDO** - SÓ tabela real
 app.get('/api/clientes', (req, res) => {
   console.log('👥 Clientes pedidos - TENTANDO TABELA clients...');
@@ -1003,8 +1021,8 @@ app.delete('/api/clientes/:id', (req, res) => {
 app.get('/api/paginas', (req, res) => {
   console.log('📄 Páginas pedidas');
   db.query(`
-    SELECT * FROM wp_posts 
-    WHERE post_type = 'page' AND post_status IN ('publish', 'draft')
+    SELECT * FROM wp_posts
+    WHERE post_type = 'page' AND post_status IN ('publish', 'draft', 'trash')
     ORDER BY post_date DESC
   `, (err, results) => {
     if (err) {
@@ -1071,7 +1089,9 @@ app.put('/api/paginas/:id', (req, res) => {
   const conteudo = (req.body?.conteudo || '').toString();
   const slug = ((req.body?.slug || titulo).toString().trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')) || 'pagina';
   const estadoRaw = (req.body?.estado || 'draft').toString().toLowerCase();
-  const estado = estadoRaw === 'publish' || estadoRaw === 'publicado' ? 'publish' : 'draft';
+  const estado = estadoRaw === 'publish' || estadoRaw === 'publicado' ? 'publish'
+    : estadoRaw === 'lixo' || estadoRaw === 'trash' ? 'trash'
+    : 'draft';
   const autor = Number(req.body?.autor) || 1;
   const ordem = Number(req.body?.ordem) || 0;
   const superior = Number(req.body?.superior) || 0;
@@ -1090,6 +1110,24 @@ app.put('/api/paginas/:id', (req, res) => {
       });
     }
   );
+});
+
+// DELETE /api/paginas/:id - eliminação definitiva (a página já deve estar no lixo)
+app.delete('/api/paginas/:id', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'ID de página inválido' });
+  }
+  db.query('DELETE FROM wp_posts WHERE ID = ? AND post_type = \'page\'', [id], (err, result) => {
+    if (err) {
+      console.error('❌ ERRO delete pagina:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    if (!result.affectedRows) {
+      return res.status(404).json({ error: 'Página não encontrada' });
+    }
+    return res.json({ success: true });
+  });
 });
 
 // PERFIL UTILIZADOR (tabela users)

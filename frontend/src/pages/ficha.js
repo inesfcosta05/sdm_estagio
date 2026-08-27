@@ -522,6 +522,30 @@ const Fichas = ({ user = null }) => {
       } catch {
         setActionError('Não foi possível aplicar a ação em lote.');
       }
+      return;
+    }
+
+    if (acaoBulk === 'restore' && selected.length > 0) {
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => restoreFicha(id)));
+        setSelected([]);
+      } catch {
+        setActionError('Não foi possível restaurar as fichas selecionadas.');
+      }
+      return;
+    }
+
+    if (acaoBulk === 'hard-delete' && selected.length > 0) {
+      if (!window.confirm('Eliminar definitivamente as fichas selecionadas? Esta ação não pode ser revertida.')) return;
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => axios.delete(`/api/fichas/${id}`)));
+        setFichas((prev) => prev.filter((ficha) => !selected.includes(getId(ficha))));
+        setSelected([]);
+      } catch {
+        setActionError('Não foi possível eliminar definitivamente as fichas selecionadas.');
+      }
     }
   };
 
@@ -565,6 +589,8 @@ const Fichas = ({ user = null }) => {
         <option value="-1">Acções por lotes</option>
         <option value="edit">Editar</option>
         <option value="delete">Mover para o lixo</option>
+        <option value="restore">Restaurar</option>
+        <option value="hard-delete">Eliminar permanentemente</option>
       </select>
       <button type="button" style={btnStyle} onClick={handleBulkApply}>Aplicar</button>
       {!bottom && <>
@@ -591,9 +617,21 @@ const Fichas = ({ user = null }) => {
 
   const renderRowActions = (ficha, isVisible) => {
     const id = getId(ficha);
+    const opacityStyle = { opacity: isVisible ? 1 : 0, transition: 'opacity 120ms ease' };
+
+    if (getEstado(ficha) === 'lixo') {
+      return (
+        <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', ...opacityStyle }}>
+          <ActionLink label="Restaurar" onClick={() => restoreFicha(id)} />
+          <ActionLink label="Eliminar permanentemente" onClick={() => hardDeleteFicha(id)} danger />
+          <ActionLink label="Ver" onClick={() => setViewingId((current) => (current === id ? null : id))} isLast />
+        </div>
+      );
+    }
+
     const previewLabel = getEstado(ficha) === 'publicado' ? 'Ver' : 'Pré-visualizar';
     return (
-      <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', opacity: isVisible ? 1 : 0, transition: 'opacity 120ms ease' }}>
+      <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', ...opacityStyle }}>
         <ActionLink label="Editar" onClick={() => navigate(`/fichas/${id}/editar`)} />
         <ActionLink label="Edição rápida" onClick={() => openQuickEdit(ficha)} />
         <ActionLink label="Lixo" onClick={() => moveFichaToTrash(id)} danger />
@@ -622,6 +660,41 @@ const Fichas = ({ user = null }) => {
       if (viewingId === id) setViewingId(null);
     } catch {
       setActionError('Não foi possível mover a ficha para o lixo.');
+    }
+  };
+
+  const restoreFicha = async (id) => {
+    const currentFicha = fichas.find((ficha) => getId(ficha) === id);
+    if (!currentFicha) return;
+
+    setActionError('');
+    try {
+      const updatedFicha = await persistFichaUpdate(id, {
+        titulo: getTitulo(currentFicha),
+        autor: getGestor(currentFicha) === '—' ? '' : getGestor(currentFicha),
+        estado: 'pendente',
+        visibilidade: currentFicha.visibilidade || 'public',
+        senha_visibilidade: currentFicha.senha_visibilidade || '',
+        data_contacto: getData(currentFicha)
+      });
+      setFichas((prev) => prev.map((ficha) => (getId(ficha) === id ? updatedFicha : ficha)));
+      setSelected((prev) => prev.filter((value) => value !== id));
+    } catch {
+      setActionError('Não foi possível restaurar a ficha.');
+    }
+  };
+
+  const hardDeleteFicha = async (id) => {
+    if (!window.confirm('Eliminar esta ficha definitivamente? Esta ação não pode ser revertida.')) return;
+    setActionError('');
+    try {
+      await axios.delete(`/api/fichas/${id}`);
+      setFichas((prev) => prev.filter((ficha) => getId(ficha) !== id));
+      setSelected((prev) => prev.filter((value) => value !== id));
+      if (quickEditId === id) closeQuickEdit();
+      if (viewingId === id) setViewingId(null);
+    } catch {
+      setActionError('Não foi possível eliminar a ficha definitivamente.');
     }
   };
 

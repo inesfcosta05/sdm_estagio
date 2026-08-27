@@ -323,6 +323,7 @@ const Clientes = () => {
   };
 
   const hardDeleteCliente = async (id) => {
+    if (!window.confirm('Eliminar este cliente definitivamente? Esta ação não pode ser revertida.')) return;
     setActionError('');
     try {
       await axios.delete(`/api/clientes/${id}`);
@@ -335,6 +336,41 @@ const Clientes = () => {
     }
   };
 
+  const moveClienteToTrash = async (id) => {
+    const cliente = clientes.find((c) => getId(c) === id);
+    if (!cliente) return;
+    setActionError('');
+    try {
+      const updated = await persistClienteUpdate(id, {
+        nome: getNome(cliente),
+        autor: getAutor(cliente) === '—' ? '' : getAutor(cliente),
+        estado: 'lixo'
+      });
+      setClientes((prev) => prev.map((c) => (getId(c) === id ? updated : c)));
+      setSelected((prev) => prev.filter((value) => value !== id));
+      if (quickEditId === id) closeQuickEdit();
+      if (viewingId === id) setViewingId(null);
+    } catch {
+      setActionError('Não foi possível mover o cliente para o lixo.');
+    }
+  };
+
+  const restoreCliente = async (id) => {
+    const cliente = clientes.find((c) => getId(c) === id);
+    if (!cliente) return;
+    setActionError('');
+    try {
+      const updated = await persistClienteUpdate(id, {
+        nome: getNome(cliente),
+        autor: getAutor(cliente) === '—' ? '' : getAutor(cliente),
+        estado: 'publicado'
+      });
+      setClientes((prev) => prev.map((c) => (getId(c) === id ? updated : c)));
+      setSelected((prev) => prev.filter((value) => value !== id));
+    } catch {
+      setActionError('Não foi possível restaurar o cliente.');
+    }
+  };
 
   const handleBulkApply = async () => {
     if (acaoBulk === 'delete' && selected.length > 0) {
@@ -355,6 +391,30 @@ const Clientes = () => {
         setSelected([]);
       } catch {
         setActionError('Não foi possível aplicar a ação em lote.');
+      }
+      return;
+    }
+
+    if (acaoBulk === 'restore' && selected.length > 0) {
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => restoreCliente(id)));
+        setSelected([]);
+      } catch {
+        setActionError('Não foi possível restaurar os clientes selecionados.');
+      }
+      return;
+    }
+
+    if (acaoBulk === 'hard-delete' && selected.length > 0) {
+      if (!window.confirm('Eliminar definitivamente os clientes selecionados? Esta ação não pode ser revertida.')) return;
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => axios.delete(`/api/clientes/${id}`)));
+        setClientes((prev) => prev.filter((c) => !selected.includes(getId(c))));
+        setSelected([]);
+      } catch {
+        setActionError('Não foi possível eliminar definitivamente os clientes selecionados.');
       }
       return;
     }
@@ -399,6 +459,8 @@ const Clientes = () => {
         <option value="-1">Acções por lotes</option>
         <option value="edit">Editar</option>
         <option value="delete">Mover para o lixo</option>
+        <option value="restore">Restaurar</option>
+        <option value="hard-delete">Eliminar permanentemente</option>
       </select>
       <button type="button" style={btnStyle} onClick={handleBulkApply}>Aplicar</button>
       {!bottom && <>
@@ -414,11 +476,23 @@ const Clientes = () => {
 
   const renderRowActions = (cliente, isVisible) => {
     const id = getId(cliente);
+    const opacityStyle = { opacity: isVisible ? 1 : 0, transition: 'opacity 120ms ease' };
+
+    if (getEstado(cliente) === 'lixo') {
+      return (
+        <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', ...opacityStyle }}>
+          <ActionLink label="Restaurar" onClick={() => restoreCliente(id)} />
+          <ActionLink label="Eliminar permanentemente" onClick={() => hardDeleteCliente(id)} danger />
+          <ActionLink label="Ver" onClick={() => setViewingId((current) => (current === id ? null : id))} isLast />
+        </div>
+      );
+    }
+
     return (
-      <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', opacity: isVisible ? 1 : 0, transition: 'opacity 120ms ease' }}>
+      <div style={{ display: 'flex', gap: 0, flexWrap: 'wrap', marginTop: 4, fontSize: '0.82rem', color: '#646970', ...opacityStyle }}>
         <ActionLink label="Editar" onClick={() => openEditFull(cliente)} />
         <ActionLink label="Edição rápida" onClick={() => openQuickEdit(cliente)} />
-        <ActionLink label="Lixo" onClick={() => hardDeleteCliente(id)} danger />
+        <ActionLink label="Lixo" onClick={() => moveClienteToTrash(id)} danger />
         <ActionLink label="Ver" onClick={() => setViewingId((current) => (current === id ? null : id))} isLast />
       </div>
     );

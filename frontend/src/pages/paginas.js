@@ -71,6 +71,7 @@ const normalizeEstado = (estado) => {
   const raw = (estado || 'publish').toString().toLowerCase();
   if (raw === 'publish' || raw === 'publicado') return 'publicado';
   if (raw === 'draft' || raw === 'rascunho') return 'rascunho';
+  if (raw === 'trash' || raw === 'lixo') return 'lixo';
   return raw;
 };
 
@@ -86,6 +87,7 @@ export default function Paginas() {
   const [hoveredRowId, setHoveredRowId] = useState(null);
   const [quickEditId, setQuickEditId] = useState(null);
   const [viewingId, setViewingId] = useState(null);
+  const [actionError, setActionError] = useState('');
   const [quickEditForm, setQuickEditForm] = useState({
     titulo: '',
     slug: '',
@@ -144,6 +146,7 @@ export default function Paginas() {
   const contTudo = paginas.length;
   const contPublicado = paginas.filter((p) => getEstado(p) === 'publicado').length;
   const contRascunho = paginas.filter((p) => getEstado(p) === 'rascunho').length;
+  const contLixo = paginas.filter((p) => getEstado(p) === 'lixo').length;
 
   const filtered = paginas.filter((p) => {
     const titulo = getTitulo(p).toLowerCase();
@@ -186,10 +189,99 @@ export default function Paginas() {
     return estado === 'publicado' ? 'Publicado' : 'Última modificação';
   };
 
-  const applyBulk = () => {
-    if (acaoBulk !== 'delete' || selected.length === 0) return;
-    setPaginas((prev) => prev.filter((p) => !selected.includes(getId(p))));
-    setSelected([]);
+  // O PUT /api/paginas/:id substitui título/conteúdo/autor/ordem/superior por
+  // completo (não é um update parcial), por isso é preciso reenviar os valores
+  // atuais da página ao mudar só o estado, ou eles seriam apagados.
+  const persistPaginaEstado = async (p, estado) => {
+    const payload = {
+      titulo: getTitulo(p),
+      conteudo: getConteudo(p),
+      slug: getSlug(p),
+      estado,
+      autor: p.post_author || p.autor || 1,
+      ordem: p.menu_order || 0,
+      superior: p.post_parent || 0
+    };
+    const response = await axios.put(`/api/paginas/${getId(p)}`, payload);
+    return response.data?.pagina || { ...p, post_status: estado === 'publicado' ? 'publish' : estado === 'lixo' ? 'trash' : 'draft', estado };
+  };
+
+  const moveParaLixo = async (id) => {
+    const p = paginas.find((item) => getId(item) === id);
+    if (!p) return;
+    setActionError('');
+    try {
+      const updated = await persistPaginaEstado(p, 'lixo');
+      setPaginas((prev) => prev.map((item) => (getId(item) === id ? updated : item)));
+      setSelected((prev) => prev.filter((value) => value !== id));
+      if (quickEditId === id) closeQuickEdit();
+      if (viewingId === id) setViewingId(null);
+    } catch {
+      setActionError('Não foi possível mover a página para o lixo.');
+    }
+  };
+
+  const restaurarPagina = async (id) => {
+    const p = paginas.find((item) => getId(item) === id);
+    if (!p) return;
+    setActionError('');
+    try {
+      const updated = await persistPaginaEstado(p, 'rascunho');
+      setPaginas((prev) => prev.map((item) => (getId(item) === id ? updated : item)));
+      setSelected((prev) => prev.filter((value) => value !== id));
+    } catch {
+      setActionError('Não foi possível restaurar a página.');
+    }
+  };
+
+  const eliminarPaginaDefinitivamente = async (id) => {
+    if (!window.confirm('Eliminar esta página definitivamente? Esta ação não pode ser revertida.')) return;
+    setActionError('');
+    try {
+      await axios.delete(`/api/paginas/${id}`);
+      setPaginas((prev) => prev.filter((item) => getId(item) !== id));
+      setSelected((prev) => prev.filter((value) => value !== id));
+      if (quickEditId === id) closeQuickEdit();
+      if (viewingId === id) setViewingId(null);
+    } catch {
+      setActionError('Não foi possível eliminar a página definitivamente.');
+    }
+  };
+
+  const applyBulk = async () => {
+    if (selected.length === 0) return;
+
+    if (acaoBulk === 'delete') {
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => moveParaLixo(id)));
+      } catch {
+        setActionError('Não foi possível aplicar a ação em lote.');
+      }
+      return;
+    }
+
+    if (acaoBulk === 'restore') {
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => restaurarPagina(id)));
+      } catch {
+        setActionError('Não foi possível restaurar as páginas selecionadas.');
+      }
+      return;
+    }
+
+    if (acaoBulk === 'hard-delete') {
+      if (!window.confirm('Eliminar definitivamente as páginas selecionadas? Esta ação não pode ser revertida.')) return;
+      setActionError('');
+      try {
+        await Promise.all(selected.map((id) => axios.delete(`/api/paginas/${id}`)));
+        setPaginas((prev) => prev.filter((p) => !selected.includes(getId(p))));
+        setSelected([]);
+      } catch {
+        setActionError('Não foi possível eliminar definitivamente as páginas selecionadas.');
+      }
+    }
   };
 
   const openQuickEdit = (p) => {
@@ -363,6 +455,8 @@ export default function Paginas() {
         </div>
       )}
 
+      {actionError && <div style={{ marginBottom: 10, color: '#b32d2e', fontSize: '0.88rem' }}>{actionError}</div>}
+
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 400 }}>Páginas</h2>
         <button type="button" style={{ ...btnStyle, color: '#2271b1', borderColor: '#2271b1' }} onClick={() => navigate('/paginas/novo')}>
@@ -385,6 +479,8 @@ export default function Paginas() {
         <FilterLink label="Publicado" count={contPublicado} value="publicado" current={filtroEstado} onClick={setFiltroEstado} />
         {' | '}
         <FilterLink label="Rascunho" count={contRascunho} value="rascunho" current={filtroEstado} onClick={setFiltroEstado} />
+        {' | '}
+        <FilterLink label="Lixo" count={contLixo} value="lixo" current={filtroEstado} onClick={setFiltroEstado} />
       </div>
 
       <Toolbar
@@ -432,13 +528,22 @@ export default function Paginas() {
                   <td style={{ padding: screenOptions.viewMode === 'compact' ? '6px 10px' : '10px', verticalAlign: 'top' }}>
                     <button type="button" style={titleLinkBtn} onClick={() => navigate(`/paginas/${id}/editar`)}>{titulo}</button>
                     {estado === 'rascunho' && <span style={{ color: '#646970', fontWeight: 600 }}> — Rascunho, Página de política de privacidade</span>}
-                    {hoveredRowId === id && (
+                    {hoveredRowId === id && estado === 'lixo' && (
+                      <div style={{ marginTop: 2, fontSize: '0.88rem' }}>
+                        <button type="button" style={linkBtn} onClick={() => restaurarPagina(id)}>Restaurar</button>
+                        <span style={sep}>|</span>
+                        <button type="button" style={{ ...linkBtn, color: '#b32d2e' }} onClick={() => eliminarPaginaDefinitivamente(id)}>Eliminar permanentemente</button>
+                        <span style={sep}>|</span>
+                        <button type="button" style={linkBtn} onClick={() => setViewingId((prev) => (prev === id ? null : id))}>Ver</button>
+                      </div>
+                    )}
+                    {hoveredRowId === id && estado !== 'lixo' && (
                       <div style={{ marginTop: 2, fontSize: '0.88rem' }}>
                         <button type="button" style={linkBtn} onClick={() => navigate(`/paginas/${id}/editar`)}>Editar</button>
                         <span style={sep}>|</span>
                         <button type="button" style={linkBtn} onClick={() => openQuickEdit(p)}>Edição rápida</button>
                         <span style={sep}>|</span>
-                        <button type="button" style={{ ...linkBtn, color: '#b32d2e' }} onClick={() => setPaginas((prev) => prev.filter((item) => getId(item) !== id))}>Lixo</button>
+                        <button type="button" style={{ ...linkBtn, color: '#b32d2e' }} onClick={() => moveParaLixo(id)}>Lixo</button>
                         <span style={sep}>|</span>
                         <button type="button" style={linkBtn} onClick={() => setViewingId((prev) => (prev === id ? null : id))}>Ver</button>
                       </div>
@@ -576,6 +681,8 @@ function Toolbar({ acaoBulk, onAcaoBulk, filtroData, onFiltroData, datas, total,
       <select value={acaoBulk} onChange={(e) => onAcaoBulk(e.target.value)} style={smallSelectStyle}>
         <option value="-1">Acções por lotes</option>
         <option value="delete">Mover para lixo</option>
+        <option value="restore">Restaurar</option>
+        <option value="hard-delete">Eliminar permanentemente</option>
       </select>
       <button type="button" style={btnStyle} onClick={onApply}>Aplicar</button>
       <select value={filtroData} onChange={(e) => onFiltroData(e.target.value)} style={{ ...smallSelectStyle, marginLeft: 8 }}>

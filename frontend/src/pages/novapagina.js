@@ -176,6 +176,29 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
     }
   };
 
+  const handleMoveToTrash = async () => {
+    if (mode !== 'edit' || !pageId) {
+      navigate('/paginas');
+      return;
+    }
+
+    setErro('');
+    try {
+      await axios.put(`/api/paginas/${pageId}`, {
+        titulo,
+        conteudo,
+        slug: titulo.toLowerCase().replace(/\s+/g, '-'),
+        estado: 'lixo',
+        autor: '',
+        ordem,
+        superior: superior === 'raiz' ? null : superior,
+      });
+      navigate('/paginas');
+    } catch {
+      setErro('Não foi possível mover a página para o lixo.');
+    }
+  };
+
   const toggleScreenOptions = () => {
     setHelpOpen(false);
     setScreenOptionsOpen((prev) => !prev);
@@ -239,7 +262,7 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
             <button style={linkBtnStyle}>Editar</button>
           </div>
           <div style={{ borderTop: '1px solid #dcdcde', marginTop: 10, paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <button style={linkBtnStyle} onClick={() => navigate('/paginas')}>← Mover para lixo</button>
+            <button style={linkBtnStyle} onClick={handleMoveToTrash}>← Mover para lixo</button>
             <button style={publishBtnStyle} onClick={() => handleSave('publish')}>Publicar</button>
           </div>
         </SideBox>
