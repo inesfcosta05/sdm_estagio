@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import DOMPurify from 'dompurify';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
@@ -533,7 +534,9 @@ export default function Paginas() {
                       <div><strong>Data:</strong> {formatData(getData(p))}</div>
                       <div style={{ marginTop: 8 }}>
                         <strong>Conteúdo:</strong>
-                        <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>{getConteudo(p) || 'Sem conteúdo.'}</div>
+                        {getConteudo(p)
+                          ? <div style={{ marginTop: 4 }} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(getConteudo(p)) }} />
+                          : <div style={{ marginTop: 4 }}>Sem conteúdo.</div>}
                       </div>
                     </td>
                   </tr>

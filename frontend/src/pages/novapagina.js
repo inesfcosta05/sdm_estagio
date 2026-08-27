@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import RichTextEditor from '../components/RichTextEditor';
 import '../api';
 
 const wordCount = (text) => text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
@@ -189,7 +190,7 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
     if (boxKey === EDITOR_SLOT_KEY) {
       return (
         <div key={EDITOR_SLOT_KEY} style={editorWrapStyle}>
-          <PageEditor value={conteudo} onChange={setConteudo} disableVisualEditor={disableVisualEditor} fullHeight={fullHeightEditor} />
+          <RichTextEditor value={conteudo} onChange={setConteudo} disableVisualEditor={disableVisualEditor} minHeight={fullHeightEditor ? 430 : 300} />
           <div style={editorFooterStyle}>Contagem de palavras: {wordCount(conteudo)}</div>
         </div>
       );
@@ -431,161 +432,6 @@ function SideBox({ title, children, onMoveUp, onMoveDown, onDragStart, onDragEnd
   );
 }
 
-function PageEditor({ value, onChange, disableVisualEditor = false, fullHeight = true }) {
-  const [mode, setMode] = useState(disableVisualEditor ? 'html' : 'visual');
-  const [showAdvancedToolbar, setShowAdvancedToolbar] = useState(false);
-  const textareaRef = React.useRef(null);
-  const [selection, setSelection] = useState({ start: 0, end: 0 });
-
-  const getSelection = () => {
-    const ta = textareaRef.current;
-    if (!ta) return selection;
-    return {
-      start: typeof ta.selectionStart === 'number' ? ta.selectionStart : selection.start,
-      end: typeof ta.selectionEnd === 'number' ? ta.selectionEnd : selection.end
-    };
-  };
-
-  const setCaret = (start, end = start) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.focus();
-    ta.setSelectionRange(start, end);
-    setSelection({ start, end });
-  };
-
-  const insertTag = (open, close) => {
-    const { start, end } = getSelection();
-    const selected = value.slice(start, end);
-    const newVal = value.slice(0, start) + open + selected + close + value.slice(end);
-    onChange(newVal);
-    const newPos = start + open.length + selected.length + close.length;
-    setTimeout(() => setCaret(newPos), 0);
-  };
-
-  const insertRaw = (text) => {
-    const { start, end } = getSelection();
-    const newVal = value.slice(0, start) + text + value.slice(end);
-    onChange(newVal);
-    const newPos = start + text.length;
-    setTimeout(() => setCaret(newPos), 0);
-  };
-
-  const closeOpenTags = () => {
-    const { start } = getSelection();
-    const before = value.slice(0, start);
-    const tagRegex = /<\/?([a-zA-Z][\w-]*)([^>]*)>/g;
-    const selfClosing = new Set(['br', 'img', 'hr', 'input', 'meta', 'link']);
-    const stack = [];
-    let match;
-
-    while ((match = tagRegex.exec(before)) !== null) {
-      const full = match[0];
-      const tag = match[1].toLowerCase();
-      const isClosing = full.startsWith('</');
-      const isSelfClosing = full.endsWith('/>') || selfClosing.has(tag);
-
-      if (!isClosing && !isSelfClosing) {
-        stack.push(tag);
-        continue;
-      }
-
-      if (isClosing) {
-        const idx = stack.lastIndexOf(tag);
-        if (idx !== -1) stack.splice(idx, 1);
-      }
-    }
-
-    if (!stack.length) {
-      setTimeout(() => textareaRef.current?.focus(), 0);
-      return;
-    }
-
-    const closers = stack.reverse().map((tag) => `</${tag}>`).join('');
-    insertRaw(closers);
-  };
-
-  const visualMainButtons = [
-    { label: <b>B</b>, action: () => insertTag('<strong>', '</strong>') },
-    { label: <i>I</i>, action: () => insertTag('<em>', '</em>') },
-    { label: '•', action: () => insertTag('<ul>\n<li>', '</li>\n</ul>') },
-    { label: '1.', action: () => insertTag('<ol>\n<li>', '</li>\n</ol>') },
-    { label: '❝', action: () => insertTag('<blockquote>', '</blockquote>') },
-    { label: '☰', action: () => insertTag('<p style="text-align:left;">', '</p>') },
-    { label: '≡', action: () => insertTag('<p style="text-align:center;">', '</p>') },
-    { label: '☷', action: () => insertTag('<p style="text-align:right;">', '</p>') },
-    { label: '🔗', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: '▦', action: () => insertTag('<table><tr><td>', '</td></tr></table>') },
-    { label: '⤢', action: () => insertTag('<pre>', '</pre>') },
-    { label: '⌨', action: () => setShowAdvancedToolbar((prev) => !prev), title: 'Mostrar/esconder barra de ferramentas' }
-  ];
-
-  const visualAdvancedButtons = [
-    { label: 'S', action: () => insertTag('<del>', '</del>') },
-    { label: 'A', action: () => insertTag('<span style="color:#1d2327;">', '</span>') },
-    { label: '🔗', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: 'Ω', action: () => insertTag('&omega;', '') }
-  ];
-
-  const htmlButtons = [
-    { label: 'b', action: () => insertTag('<b>', '</b>') },
-    { label: 'i', action: () => insertTag('<i>', '</i>') },
-    { label: 'link', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: 'b-quote', action: () => insertTag('<blockquote>', '</blockquote>') },
-    { label: 'img', action: () => { const url = window.prompt('URL da imagem:'); if (url) insertTag(`<img src="${url}" alt="" />`, ''); } },
-    { label: 'ul', action: () => insertTag('<ul>\n<li>', '</li>\n</ul>') },
-    { label: 'ol', action: () => insertTag('<ol>\n<li>', '</li>\n</ol>') },
-    { label: 'code', action: () => insertTag('<code>', '</code>') },
-    { label: 'fechar etiquetas', action: closeOpenTags }
-  ];
-
-  const isVisual = mode === 'visual';
-  const buttons = isVisual ? visualMainButtons : htmlButtons;
-
-  return (
-    <>
-      <div style={editorTopBarStyle}>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button type="button" style={editorTopBtnStyle}>Adicionar multimédia</button>
-          <button type="button" style={editorTopBtnStyle}>Shortcode do Pods</button>
-        </div>
-        <div style={{ display: 'flex', gap: 0, marginLeft: 'auto', alignSelf: 'stretch' }}>
-          <button type="button" style={{ ...tabBtnStyle, background: isVisual ? '#fff' : '#f0f0f1', fontWeight: isVisual ? 600 : 400 }} onClick={() => setMode('visual')}>Visual</button>
-          <button type="button" style={{ ...tabBtnStyle, background: !isVisual ? '#fff' : '#f0f0f1', fontWeight: !isVisual ? 600 : 400 }} onClick={() => setMode('html')}>HTML</button>
-        </div>
-      </div>
-
-      <div style={formatBarStyle}>
-        {isVisual && <select style={formatSelectStyle}><option>Parágrafo</option></select>}
-        {buttons.map((btn, i) => (
-          <button key={i} type="button" onClick={btn.action} style={isVisual ? formatIconBtnStyle : formatTagBtnStyle} title={btn.title || ''}>
-            {btn.label}
-          </button>
-        ))}
-      </div>
-
-      {isVisual && showAdvancedToolbar && (
-        <div style={formatBarStyle}>
-          {visualAdvancedButtons.map((btn, i) => (
-            <button key={`adv-${i}`} type="button" onClick={btn.action} style={formatIconBtnStyle}>{btn.label}</button>
-          ))}
-        </div>
-      )}
-
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onSelect={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        onClick={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        onKeyUp={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        style={{ ...textareaStyle, minHeight: fullHeight ? 430 : 300 }}
-        placeholder={!isVisual ? '<p>Escreva HTML aqui...</p>' : 'Escreva o conteúdo aqui...'}
-      />
-    </>
-  );
-}
-
 const titleInputStyle = {
   width: '100%', padding: '10px 12px', fontSize: '1.5rem', border: '1px solid #c3c4c7',
   borderRadius: 0, marginBottom: 12, boxSizing: 'border-box', outline: 'none',
@@ -596,32 +442,6 @@ const boxHeaderStyle = {
   padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
 };
 const editorWrapStyle = { border: '1px solid #c3c4c7', background: '#fff', marginBottom: 12 };
-const editorTopBarStyle = {
-  background: '#f6f7f7', borderBottom: '1px solid #dcdcde',
-  padding: '6px 8px', display: 'flex', alignItems: 'center',
-};
-const editorTopBtnStyle = {
-  background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4,
-  padding: '5px 12px', fontSize: '0.92rem', cursor: 'pointer', color: '#3c434a',
-};
-const tabBtnStyle = {
-  border: '1px solid #c3c4c7', borderBottom: 'none', padding: '6px 14px', fontSize: '0.95rem',
-  cursor: 'pointer', color: '#3c434a', background: 'transparent',
-};
-const formatBarStyle = {
-  background: '#f0f0f1', borderBottom: '1px solid #dcdcde',
-  padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
-};
-const formatSelectStyle = {
-  border: '1px solid #c3c4c7', borderRadius: 0, padding: '4px 8px', fontSize: '0.85rem', minWidth: 140,
-};
-const formatIconBtnStyle = { background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, color: '#3c434a', minWidth: 24, padding: '2px 4px' };
-const formatTagBtnStyle = { background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1.2, color: '#3c434a', padding: '4px 10px' };
-const textareaStyle = {
-  width: '100%', minHeight: 300, border: 'none', outline: 'none',
-  resize: 'vertical', padding: '10px', fontSize: '0.95rem',
-  boxSizing: 'border-box', fontFamily: 'Georgia, "Times New Roman", serif', display: 'block', lineHeight: 1.6,
-};
 const editorFooterStyle = {
   borderTop: '1px solid #dcdcde', padding: '5px 10px',
   fontSize: '0.82rem', color: '#646970', background: '#f6f7f7',

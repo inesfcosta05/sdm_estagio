@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import DOMPurify from 'dompurify';
 import { format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
@@ -885,7 +886,10 @@ const Fichas = ({ user = null }) => {
                       <div><strong>Gestor:</strong> {getGestor(ficha)}</div>
                       <div><strong>Estado:</strong> {estLabel(ficha)}</div>
                       <div><strong>Data:</strong> {formatData(getData(ficha))}</div>
-                      <div><strong>Resumo:</strong> {getPreview(ficha)}</div>
+                      <div style={{ marginTop: 8 }}>
+                        <strong>Resumo:</strong>
+                        <div style={{ marginTop: 4 }} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(getPreview(ficha)) }} />
+                      </div>
                     </td>
                   </tr>
                 )}

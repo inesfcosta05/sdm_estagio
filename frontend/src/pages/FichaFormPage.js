@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
+import RichTextEditor from '../components/RichTextEditor';
 import '../api';
 
 const MONTHS = [
@@ -528,7 +529,7 @@ export default function FichaFormPage({ mode = 'create', disableVisualEditor = f
               <input type="time" value={form.fim_contacto} onChange={(e) => handleChange('fim_contacto', e.target.value)} style={{ ...fieldInput, width: '100%' }} />
             </FieldFull>
             <FieldFull label="Motivo/Resumo do Contacto">
-              <MiniEditor value={form.motivo_resumo_contacto} onChange={(value) => handleChange('motivo_resumo_contacto', value)} disableVisualEditor={disableVisualEditor} />
+              <RichTextEditor value={form.motivo_resumo_contacto} onChange={(value) => handleChange('motivo_resumo_contacto', value)} disableVisualEditor={disableVisualEditor} />
             </FieldFull>
 
             <CheckRow label="Contacto Efetuado?" checked={form.contacto_efetuado} onChange={(value) => handleChange('contacto_efetuado', value)} />
@@ -558,7 +559,7 @@ export default function FichaFormPage({ mode = 'create', disableVisualEditor = f
               </select>
             </FieldFull>
             <FieldFull label="Descritivo da Proposta">
-              <MiniEditor value={form.descritivo_proposta} onChange={(value) => handleChange('descritivo_proposta', value)} disableVisualEditor={disableVisualEditor} />
+              <RichTextEditor value={form.descritivo_proposta} onChange={(value) => handleChange('descritivo_proposta', value)} disableVisualEditor={disableVisualEditor} />
             </FieldFull>
             <FieldFull label="Serviços Propostos">
               <ServicosTable
@@ -580,7 +581,7 @@ export default function FichaFormPage({ mode = 'create', disableVisualEditor = f
               </select>
             </FieldFull>
             <FieldFull label="Motivo da Possibilidade de Negócio">
-              <MiniEditor value={form.motivo_possibilidade_negocio} onChange={(value) => handleChange('motivo_possibilidade_negocio', value)} disableVisualEditor={disableVisualEditor} minHeight={420} />
+              <RichTextEditor value={form.motivo_possibilidade_negocio} onChange={(value) => handleChange('motivo_possibilidade_negocio', value)} disableVisualEditor={disableVisualEditor} minHeight={420} />
             </FieldFull>
           </>
         )}
@@ -599,7 +600,7 @@ export default function FichaFormPage({ mode = 'create', disableVisualEditor = f
               <input value={form.valor_total_adjudicado} onChange={(e) => handleChange('valor_total_adjudicado', e.target.value)} style={{ ...fieldInput, width: '100%' }} />
             </FieldFull>
             <FieldFull label="Descritivo da Fatura">
-              <MiniEditor value={form.descritivo_fatura} onChange={(value) => handleChange('descritivo_fatura', value)} disableVisualEditor={disableVisualEditor} />
+              <RichTextEditor value={form.descritivo_fatura} onChange={(value) => handleChange('descritivo_fatura', value)} disableVisualEditor={disableVisualEditor} />
             </FieldFull>
             <FieldFull label="Valor da Fatura">
               <input value={form.valor_fatura} onChange={(e) => handleChange('valor_fatura', e.target.value)} style={{ ...fieldInput, width: '100%' }} />
@@ -903,191 +904,6 @@ function ClientSelect({ value, options, onChange }) {
   );
 }
 
-function MiniEditor({ value, onChange, disableVisualEditor = false, minHeight = 130 }) {
-  const [mode, setMode] = React.useState(disableVisualEditor ? 'html' : 'visual');
-  const [showAdvancedToolbar, setShowAdvancedToolbar] = React.useState(false);
-  const textareaRef = React.useRef(null);
-  const [selection, setSelection] = React.useState({ start: 0, end: 0 });
-
-  React.useEffect(() => {
-    setMode(disableVisualEditor ? 'html' : 'visual');
-  }, [disableVisualEditor]);
-
-  const getSelection = () => {
-    const ta = textareaRef.current;
-    if (!ta) return selection;
-    return {
-      start: typeof ta.selectionStart === 'number' ? ta.selectionStart : selection.start,
-      end: typeof ta.selectionEnd === 'number' ? ta.selectionEnd : selection.end
-    };
-  };
-
-  const setCaret = (start, end = start) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.focus();
-    ta.setSelectionRange(start, end);
-    setSelection({ start, end });
-  };
-
-  const insertTag = (open, close) => {
-    const { start, end } = getSelection();
-    const selected = value.slice(start, end);
-    const newVal = value.slice(0, start) + open + selected + close + value.slice(end);
-    onChange(newVal);
-    const newPos = start + open.length + selected.length + close.length;
-    setTimeout(() => setCaret(newPos), 0);
-  };
-
-  const insertRaw = (text) => {
-    const { start, end } = getSelection();
-    const newVal = value.slice(0, start) + text + value.slice(end);
-    onChange(newVal);
-    const newPos = start + text.length;
-    setTimeout(() => setCaret(newPos), 0);
-  };
-
-  const closeOpenTags = () => {
-    const { start } = getSelection();
-    const before = value.slice(0, start);
-    const tagRegex = /<\/?([a-zA-Z][\w-]*)([^>]*)>/g;
-    const selfClosing = new Set(['br', 'img', 'hr', 'input', 'meta', 'link']);
-    const stack = [];
-    let match;
-
-    while ((match = tagRegex.exec(before)) !== null) {
-      const full = match[0];
-      const tag = match[1].toLowerCase();
-      const isClosing = full.startsWith('</');
-      const isSelfClosing = full.endsWith('/>') || selfClosing.has(tag);
-
-      if (!isClosing && !isSelfClosing) {
-        stack.push(tag);
-        continue;
-      }
-
-      if (isClosing) {
-        const idx = stack.lastIndexOf(tag);
-        if (idx !== -1) stack.splice(idx, 1);
-      }
-    }
-
-    if (!stack.length) {
-      // Keep behavior visible when there are no pending tags to close.
-      setTimeout(() => {
-        const ta = textareaRef.current;
-        if (ta) {
-          ta.focus();
-        }
-      }, 0);
-      return;
-    }
-    const closers = stack.reverse().map((tag) => `</${tag}>`).join('');
-    insertRaw(closers);
-  };
-
-  const visualMainButtons = [
-    { label: <b>B</b>, action: () => insertTag('<strong>', '</strong>') },
-    { label: <i>I</i>, action: () => insertTag('<em>', '</em>') },
-    { label: '•', action: () => insertTag('<ul>\n<li>', '</li>\n</ul>') },
-    { label: '1.', action: () => insertTag('<ol>\n<li>', '</li>\n</ol>') },
-    { label: '❝', action: () => insertTag('<blockquote>', '</blockquote>') },
-    { label: '☰', action: () => insertTag('<p style="text-align:left;">', '</p>') },
-    { label: '≡', action: () => insertTag('<p style="text-align:center;">', '</p>') },
-    { label: '☷', action: () => insertTag('<p style="text-align:right;">', '</p>') },
-    { label: '🔗', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: '▦', action: () => insertTag('<table><tr><td>', '</td></tr></table>') },
-    { label: '⤢', action: () => insertTag('<pre>', '</pre>') },
-    { label: '⌨', action: () => setShowAdvancedToolbar((prev) => !prev), title: 'Mostrar/esconder barra de ferramentas (Shift+Alt+Z)' }
-  ];
-
-  const visualAdvancedButtons = [
-    { label: 'S', action: () => insertTag('<del>', '</del>') },
-    { label: 'A', action: () => insertTag('<span style="color:#1d2327;">', '</span>') },
-    { label: '🔗', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: 'Ω', action: () => insertTag('&omega;', '') },
-    { label: '⇤', action: () => insertTag('<p style="text-indent:2em;">', '</p>') },
-    { label: '⇥', action: () => insertTag('<p style="margin-left:2em;">', '</p>') },
-    { label: '↺', action: () => {} },
-    { label: '↻', action: () => {} },
-    { label: '?', action: () => {} }
-  ];
-
-  const htmlButtons = [
-    { label: 'b', action: () => insertTag('<b>', '</b>') },
-    { label: 'i', action: () => insertTag('<i>', '</i>') },
-    { label: 'link', action: () => { const url = window.prompt('URL:'); if (url) insertTag(`<a href="${url}">`, '</a>'); } },
-    { label: 'b-quote', action: () => insertTag('<blockquote>', '</blockquote>') },
-    { label: 'del', action: () => insertTag('<del>', '</del>') },
-    { label: 'ins', action: () => insertTag('<ins>', '</ins>') },
-    { label: 'img', action: () => { const url = window.prompt('URL da imagem:'); if (url) insertTag(`<img src="${url}" alt="" />`, ''); } },
-    { label: 'ul', action: () => insertTag('<ul>\n<li>', '</li>\n</ul>') },
-    { label: 'ol', action: () => insertTag('<ol>\n<li>', '</li>\n</ol>') },
-    { label: 'li', action: () => insertTag('<li>', '</li>') },
-    { label: 'code', action: () => insertTag('<code>', '</code>') },
-    { label: 'more', action: () => insertRaw('\n<!--more-->\n') },
-    { label: 'fechar etiquetas', action: closeOpenTags }
-  ];
-
-  const isVisual = mode === 'visual';
-  const buttons = isVisual ? visualMainButtons : htmlButtons;
-
-  return (
-    <div style={{ border: '1px solid #c3c4c7', background: '#fff' }}>
-      <div style={{ background: '#f0f0f1', borderBottom: '1px solid #dcdcde', padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <button type="button" style={editorTopBtn}>Adicionar multimédia</button>
-        <button type="button" style={editorTopBtn}>Shortcode do Pods</button>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignSelf: 'stretch' }}>
-          <button type="button" onClick={() => setMode('visual')} style={{ ...tabBtnSm, background: isVisual ? '#fff' : '#f0f0f1', fontWeight: isVisual ? 600 : 400 }}>Visual</button>
-          <button type="button" onClick={() => setMode('html')} style={{ ...tabBtnSm, background: !isVisual ? '#fff' : '#f0f0f1', fontWeight: !isVisual ? 600 : 400 }}>HTML</button>
-        </div>
-      </div>
-      <div style={{ background: '#f0f0f1', borderBottom: '1px solid #dcdcde', padding: '6px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {isVisual && (
-          <select style={{ ...fieldInput, padding: '4px 8px', fontSize: '0.85rem', minWidth: 140, borderRadius: 0 }}>
-            <option>Parágrafo</option>
-          </select>
-        )}
-        {buttons.map((btn, i) => (
-          <button key={i} type="button" onClick={btn.action} style={isVisual ? editorIconBtn : editorTagBtn} title={btn.title || ''}>
-            {btn.label}
-          </button>
-        ))}
-      </div>
-      {isVisual && showAdvancedToolbar && (
-        <div style={{ background: '#f0f0f1', borderBottom: '1px solid #dcdcde', padding: '6px 8px', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {visualAdvancedButtons.map((btn, i) => (
-            <button key={`adv-${i}`} type="button" onClick={btn.action} style={editorIconBtn}>
-              {btn.label}
-            </button>
-          ))}
-        </div>
-      )}
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onSelect={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        onClick={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        onKeyUp={(e) => setSelection({ start: e.target.selectionStart, end: e.target.selectionEnd })}
-        style={{
-          width: '100%',
-          border: 'none',
-          outline: 'none',
-          minHeight,
-          padding: '10px',
-          resize: 'vertical',
-          boxSizing: 'border-box',
-          fontFamily: isVisual ? 'Georgia, "Times New Roman", serif' : 'Consolas, "Courier New", monospace',
-          fontSize: isVisual ? '0.95rem' : '0.92rem',
-          lineHeight: 1.6,
-          color: '#1d2327'
-        }}
-      />
-    </div>
-  );
-}
-
 function ServicosTable({ rows, addRow, updateRow, removeRow }) {
   return (
     <div>
@@ -1155,11 +971,7 @@ const iconBtn = (enabled = true) => ({
 });
 const checkboxRow = { display: 'flex', alignItems: 'center', gap: 6 };
 const radioRow = { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 };
-const editorTopBtn = { background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4, padding: '5px 12px', fontSize: '0.92rem', lineHeight: 1.2, cursor: 'pointer', color: '#3c434a' };
-const tabBtnSm = { border: '1px solid #c3c4c7', borderBottom: 'none', padding: '6px 14px', fontSize: '0.95rem', cursor: 'pointer', background: 'transparent', color: '#3c434a' };
-const editorIconBtn = { background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, color: '#3c434a', minWidth: 24, padding: '2px 4px' };
-const editorTagBtn = { background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4, cursor: 'pointer', fontSize: '0.9rem', lineHeight: 1.2, color: '#3c434a', padding: '4px 10px' };
-const okBtn = { background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4, color: '#1d2327', padding: '4px 10px', fontSize: '0.9rem', cursor: 'pointer' };
+const okBtn ={ background: '#f6f7f7', border: '1px solid #8c8f94', borderRadius: 4, color: '#1d2327', padding: '4px 10px', fontSize: '0.9rem', cursor: 'pointer' };
 const serviceActionBtn = { width: 22, height: 22, border: '1px solid #8c8f94', background: '#fff', borderRadius: '50%', lineHeight: '18px', textAlign: 'center', cursor: 'pointer', color: '#3c434a', fontSize: '1rem' };
 const clientSelectBtn = { width: '100%', border: '1px solid #c3c4c7', borderRadius: 3, padding: '5px 8px', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left', color: '#1d2327', fontSize: '0.9rem' };
 const clientSelectList = { position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, border: '1px solid #c3c4c7', background: '#fff', zIndex: 80, maxHeight: 260, overflowY: 'auto' };
