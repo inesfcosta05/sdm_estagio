@@ -1,0 +1,162 @@
+--- Section 0 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=3.42 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=1.27 footer_dist=1.27 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 1 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=3.42 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=1.27 footer_dist=1.27 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 2 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 3 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 4 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 5 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 6 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.01 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 7 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.93 bottom=3.01 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=CONTINUOUS (0)
+
+--- Section 8 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 9 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 10 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 11 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=2.40 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.07 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 12 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.07 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.74 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 13 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=0.00 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 14 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.07 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.74 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 15 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.07 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.74 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 16 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.28 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.95 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 17 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.28 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.95 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 18 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=3.28 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=2.95 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 19 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=0.00 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 20 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=3.42 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=0.00 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 21 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=3.42 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=0.00 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+--- Section 22 ---
+  page size: 20.99 x 29.70 cm
+  margins: top=2.86 bottom=0.49 left=1.75 right=1.75 cm
+  header_dist=0.00 footer_dist=0.00 cm
+  different_first_page=False
+  start_type=NEW_PAGE (2)
+
+... total 23 sections (only showing all above)

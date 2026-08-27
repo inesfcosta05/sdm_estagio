@@ -1,0 +1,47 @@
+1847	Solução Implementada:
+1848	
+1849	// backend/scripts/ensure_unique_indexes.js
+1850	async function ensureUniqueIndexes() {
+1851	  // Remover duplicados por legacy_id
+1852	  await pool.query(`
+1853	    DELETE t1 FROM fichas t1
+1854	    INNER JOIN fichas t2
+1855	    WHERE t1.id > t2.id
+1856	    AND t1.legacy_id = t2.legacy_id
+1857	    AND t1.legacy_id IS NOT NULL
+1858	  `);
+1859	
+1860	  // Remover duplicados de clientes por NIF
+1861	  await pool.query(`
+1862	    DELETE t1 FROM clientes t1
+1863	    INNER JOIN clientes t2
+1864	    WHERE t1.id > t2.id
+1865	    AND t1.nif = t2.nif
+1866	    AND t1.nif IS NOT NULL
+1867	  `);
+1868	
+1869	  console.log('✓ Duplicados removidos');
+1870	}
+1871	
+1872	// Validar e corrigir estados inválidos
+1873	async function fixInvalidStates() {
+1874	  const validStates = ['draft', 'publish', 'archive'];
+1875	  
+1876	  const [invalid] = await pool.query(`
+1877	    SELECT id, post_status FROM fichas
+1878	    WHERE post_status NOT IN (?, ?, ?)
+1879	  `, validStates);
+1880	
+1881	  for (const row of invalid) {
+1882	    await pool.query(
+1883	      'UPDATE fichas SET post_status = ? WHERE id = ?',
+1884	      ['draft', row.id]
+1885	    );
+1886	  }
+1887	
+1888	  console.log(✓ ${invalid.length} estados corrigidos);
+1889	}
+1890	
+1891	Resultados Obtidos
+1892	
+1893	Funcionalidades Implementadas

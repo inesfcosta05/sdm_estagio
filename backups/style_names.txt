@@ -1,0 +1,25 @@
+Assunto de comentário Caráter
+Body Text
+Cabeçalho Caráter
+Default Paragraph Font
+Footer
+Header
+Heading 1
+Heading 2
+Heading 3
+Heading 4
+Hyperlink
+List Paragraph
+No List
+Normal
+Normal Table
+Rodapé Caráter
+Table Normal
+Table Paragraph
+Texto de comentário Caráter
+annotation reference
+annotation subject
+annotation text
+toc 1
+toc 2
+toc 3

@@ -1,0 +1,28 @@
+1576	Estratégia 1: Separado (Recomendado)
+1577	┌─────────────────────────┐
+1578	│  Frontend                │
+1579	│  (Render, static site)   │
+1580	└─────────────────────────┘
+1581	          ↓
+1582	┌─────────────────────────┐
+1583	│  Backend Express         │
+1584	│  (Render, web service)   │
+1585	└─────────────────────────┘
+1586	          ↓
+1587	┌─────────────────────────┐
+1588	│  MySQL Database          │
+1589	│  (externo — Render não   │
+1590	│  tem MySQL gerido)       │
+1591	└─────────────────────────┘
+1592	
+1593	Deploy:
+1594	Automático: cada git push aciona o build e deploy em ambos os serviços Render.
+1595	
+1596	render.yaml (configuração real):
+1597	services:
+1598	  - type: web
+1599	    name: fichas-backend       # runtime: node, rootDir: backend
+1600	    startCommand: node server.js
+1601	  - type: web
+1602	    name: fichas-frontend      # runtime: static, build: npm run build
+1603	
