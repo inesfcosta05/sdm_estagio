@@ -1670,6 +1670,9 @@ app.post('/api/admin/impersonate', (req, res) => {
 const WP_API_URL = (process.env.WP_API_URL || '').trim();
 const WP_API_USER = (process.env.WP_API_USER || '').trim();
 const WP_API_PASS = (process.env.WP_API_PASS || '').trim();
+// WordPress's `status=any` deliberately excludes 'trash' — list every native
+// status by name so authenticated requests can see trashed items too.
+const WP_ALL_STATUSES = 'publish,pending,draft,future,private,trash';
 const WP_API_HEADERS = WP_API_USER && WP_API_PASS
   ? {
       Authorization: `Basic ${Buffer.from(`${WP_API_USER}:${WP_API_PASS}`).toString('base64')}`
@@ -1687,8 +1690,8 @@ app.get('/api/sync/wordpress/fichas', async (req, res) => {
 
   try {
     console.log('🔄 Sincronizando fichas do WordPress...');
-    const wpUrl = `${WP_API_URL}/wp/v2/posts?per_page=100&context=${Object.keys(WP_API_HEADERS).length ? 'edit' : 'view'}&status=${Object.keys(WP_API_HEADERS).length ? 'any' : 'publish'}`;
-    
+    const wpUrl = `${WP_API_URL}/wp/v2/posts?per_page=100&context=${Object.keys(WP_API_HEADERS).length ? 'edit' : 'view'}&status=${Object.keys(WP_API_HEADERS).length ? WP_ALL_STATUSES : 'publish'}`;
+
     const response = await axios.get(wpUrl, { headers: WP_API_HEADERS });
     const fichas = response.data.map(post => ({
       id: post.id,
@@ -1757,8 +1760,8 @@ app.get('/api/sync/wordpress/clientes', async (req, res) => {
     
     // Se usar um custom post type para clientes, usar aqui
     // Para agora, busca fichas com categoria "cliente"
-    const wpUrl = `${WP_API_URL}/wp/v2/posts?per_page=100&search=cliente&context=${Object.keys(WP_API_HEADERS).length ? 'edit' : 'view'}&status=${Object.keys(WP_API_HEADERS).length ? 'any' : 'publish'}`;
-    
+    const wpUrl = `${WP_API_URL}/wp/v2/posts?per_page=100&search=cliente&context=${Object.keys(WP_API_HEADERS).length ? 'edit' : 'view'}&status=${Object.keys(WP_API_HEADERS).length ? WP_ALL_STATUSES : 'publish'}`;
+
     const response = await axios.get(wpUrl, { headers: WP_API_HEADERS });
     const clientes = response.data.map(post => ({
       id: post.id,

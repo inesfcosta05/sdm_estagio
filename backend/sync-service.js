@@ -39,6 +39,20 @@ class SyncService {
     return Object.keys(this.getWordPressAuthHeaders()).length > 0;
   }
 
+  // WordPress's REST API treats `status=any` as a shorthand for every status
+  // EXCEPT 'trash' (trash is intentionally hidden from "any" for safety) — so
+  // fetching trashed items requires asking for every native post_status by
+  // name, explicitly including 'trash'.
+  static ALL_NATIVE_STATUSES = 'publish,pending,draft,future,private,trash';
+
+  /**
+   * Fetches a WP collection across every native post_status (publish, pending,
+   * draft, trash, ...) when authenticated. Returns `{ items, complete }` —
+   * `complete` is false whenever we fell back to an unauthenticated,
+   * publish-only fetch, so callers know NOT to treat that partial result as
+   * the full picture (e.g. never delete local rows just because they're
+   * missing from a publish-only snapshot).
+   */
   async fetchWordPressCollection(resourcePath) {
     const collect = async (useEditContext) => {
       const itemsById = new Map();
@@ -47,7 +61,7 @@ class SyncService {
         `context=${useEditContext ? 'edit' : 'view'}`
       ];
 
-      queryParts.push(useEditContext ? 'status=any' : 'status=publish');
+      queryParts.push(useEditContext ? `status=${SyncService.ALL_NATIVE_STATUSES}` : 'status=publish');
 
       let page = 1;
       let hasMore = true;
@@ -94,15 +108,15 @@ class SyncService {
 
     const preferEdit = this.hasWordPressAuth();
     const primary = await collect(preferEdit);
-    if (primary !== null) return primary;
+    if (primary !== null) return { items: primary, complete: preferEdit };
 
     if (preferEdit) {
-      console.log('ℹ️  Fallback WordPress sem auth (view/publish)');
+      console.warn('⚠️  Autenticação WordPress falhou — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até a autenticação ser corrigida.');
       const fallback = await collect(false);
-      return fallback || [];
+      return { items: fallback || [], complete: false };
     }
 
-    return [];
+    return { items: [], complete: false };
   }
 
   /**
@@ -170,7 +184,7 @@ class SyncService {
    */
   async syncFichas() {
     try {
-      const allFichas = await this.fetchWordPressCollection('/wp/v2/fichas');
+      const { items: allFichas, complete } = await this.fetchWordPressCollection('/wp/v2/fichas');
 
       if (allFichas.length === 0) {
         console.log('ℹ️  Nenhuma ficha encontrada no WordPress');
@@ -212,33 +226,40 @@ class SyncService {
         });
       }
 
-      const wpFichaIds = new Set(allFichas.map((ficha) => Number(ficha.id)));
-      const localFichaRows = await new Promise((resolve, reject) => {
-        this.localDb.query(
-          'SELECT id, legacy_id FROM fichas WHERE legacy_id IS NOT NULL',
-          (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows || []);
-          }
-        );
-      });
-
-      const orphanFichaIds = localFichaRows
-        .filter((row) => !wpFichaIds.has(Number(row.legacy_id)))
-        .map((row) => row.id);
-
-      if (orphanFichaIds.length > 0) {
-        await new Promise((resolve, reject) => {
+      // Only delete local rows that vanished from WordPress when we're sure we
+      // saw every native status (including trash) — a degraded/publish-only
+      // fetch must never be mistaken for "these other rows no longer exist".
+      if (!complete) {
+        console.warn('⚠️  A saltar a limpeza de fichas órfãs: a sincronização não teve acesso autenticado a todos os estados nesta ronda.');
+      } else {
+        const wpFichaIds = new Set(allFichas.map((ficha) => Number(ficha.id)));
+        const localFichaRows = await new Promise((resolve, reject) => {
           this.localDb.query(
-            `DELETE FROM fichas WHERE id IN (${orphanFichaIds.map(() => '?').join(', ')})`,
-            orphanFichaIds,
-            (err) => {
+            'SELECT id, legacy_id FROM fichas WHERE legacy_id IS NOT NULL',
+            (err, rows) => {
               if (err) reject(err);
-              else resolve();
+              else resolve(rows || []);
             }
           );
         });
-        console.log(`🧹 Removidas ${orphanFichaIds.length} fichas órfãs`);
+
+        const orphanFichaIds = localFichaRows
+          .filter((row) => !wpFichaIds.has(Number(row.legacy_id)))
+          .map((row) => row.id);
+
+        if (orphanFichaIds.length > 0) {
+          await new Promise((resolve, reject) => {
+            this.localDb.query(
+              `DELETE FROM fichas WHERE id IN (${orphanFichaIds.map(() => '?').join(', ')})`,
+              orphanFichaIds,
+              (err) => {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          });
+          console.log(`🧹 Removidas ${orphanFichaIds.length} fichas órfãs`);
+        }
       }
 
       this.lastSync.fichas = new Date();
@@ -253,7 +274,7 @@ class SyncService {
    */
   async syncClients() {
     try {
-      const allClients = await this.fetchWordPressCollection('/wp/v2/clientes');
+      const { items: allClients, complete } = await this.fetchWordPressCollection('/wp/v2/clientes');
 
       if (allClients.length === 0) {
         console.log('ℹ️  Nenhum cliente encontrado');
@@ -297,33 +318,37 @@ class SyncService {
         });
       }
 
-      const wpClientIds = new Set(allClients.map((client) => Number(client.id)));
-      const localClientRows = await new Promise((resolve, reject) => {
-        this.localDb.query(
-          'SELECT id, legacy_id FROM clients WHERE legacy_id IS NOT NULL',
-          (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows || []);
-          }
-        );
-      });
-
-      const orphanClientIds = localClientRows
-        .filter((row) => !wpClientIds.has(Number(row.legacy_id)))
-        .map((row) => row.id);
-
-      if (orphanClientIds.length > 0) {
-        await new Promise((resolve, reject) => {
+      if (!complete) {
+        console.warn('⚠️  A saltar a limpeza de clientes órfãos: a sincronização não teve acesso autenticado a todos os estados nesta ronda.');
+      } else {
+        const wpClientIds = new Set(allClients.map((client) => Number(client.id)));
+        const localClientRows = await new Promise((resolve, reject) => {
           this.localDb.query(
-            `DELETE FROM clients WHERE id IN (${orphanClientIds.map(() => '?').join(', ')})`,
-            orphanClientIds,
-            (err) => {
+            'SELECT id, legacy_id FROM clients WHERE legacy_id IS NOT NULL',
+            (err, rows) => {
               if (err) reject(err);
-              else resolve();
+              else resolve(rows || []);
             }
           );
         });
-        console.log(`🧹 Removidos ${orphanClientIds.length} clientes órfãos`);
+
+        const orphanClientIds = localClientRows
+          .filter((row) => !wpClientIds.has(Number(row.legacy_id)))
+          .map((row) => row.id);
+
+        if (orphanClientIds.length > 0) {
+          await new Promise((resolve, reject) => {
+            this.localDb.query(
+              `DELETE FROM clients WHERE id IN (${orphanClientIds.map(() => '?').join(', ')})`,
+              orphanClientIds,
+              (err) => {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          });
+          console.log(`🧹 Removidos ${orphanClientIds.length} clientes órfãos`);
+        }
       }
 
       this.lastSync.clients = new Date();
@@ -338,7 +363,7 @@ class SyncService {
    */
   async syncPages() {
     try {
-      const allPages = await this.fetchWordPressCollection('/wp/v2/pages');
+      const { items: allPages, complete } = await this.fetchWordPressCollection('/wp/v2/pages');
 
       if (allPages.length === 0) {
         console.log('ℹ️  Nenhuma página encontrada');
@@ -390,33 +415,37 @@ class SyncService {
         });
       }
 
-      const wpPageIds = new Set(allPages.map((page) => Number(page.id)));
-      const localPageRows = await new Promise((resolve, reject) => {
-        this.localDb.query(
-          `SELECT ID FROM wp_posts WHERE post_type = 'page'`,
-          (err, rows) => {
-            if (err) reject(err);
-            else resolve(rows || []);
-          }
-        );
-      });
-
-      const orphanPageIds = localPageRows
-        .map((row) => Number(row.ID))
-        .filter((id) => !wpPageIds.has(id));
-
-      if (orphanPageIds.length > 0) {
-        await new Promise((resolve, reject) => {
+      if (!complete) {
+        console.warn('⚠️  A saltar a limpeza de páginas órfãs: a sincronização não teve acesso autenticado a todos os estados nesta ronda.');
+      } else {
+        const wpPageIds = new Set(allPages.map((page) => Number(page.id)));
+        const localPageRows = await new Promise((resolve, reject) => {
           this.localDb.query(
-            `DELETE FROM wp_posts WHERE ID IN (${orphanPageIds.map(() => '?').join(', ')}) AND post_type = 'page'`,
-            orphanPageIds,
-            (err) => {
+            `SELECT ID FROM wp_posts WHERE post_type = 'page'`,
+            (err, rows) => {
               if (err) reject(err);
-              else resolve();
+              else resolve(rows || []);
             }
           );
         });
-        console.log(`🧹 Removidas ${orphanPageIds.length} páginas órfãs`);
+
+        const orphanPageIds = localPageRows
+          .map((row) => Number(row.ID))
+          .filter((id) => !wpPageIds.has(id));
+
+        if (orphanPageIds.length > 0) {
+          await new Promise((resolve, reject) => {
+            this.localDb.query(
+              `DELETE FROM wp_posts WHERE ID IN (${orphanPageIds.map(() => '?').join(', ')}) AND post_type = 'page'`,
+              orphanPageIds,
+              (err) => {
+                if (err) reject(err);
+                else resolve();
+              }
+            );
+          });
+          console.log(`🧹 Removidas ${orphanPageIds.length} páginas órfãs`);
+        }
       }
 
       this.lastSync.pages = new Date();
