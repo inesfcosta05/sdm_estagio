@@ -1804,6 +1804,169 @@ app.post('/api/sync/trigger', (req, res) => {
 });
 
 // ============================================
+// 🛠️ REPARAÇÃO TEMPORÁRIA DE ESTADOS (fichas/clientes perdidos na migração)
+// ============================================
+// A migração original para `fichas`/`clients` gravou `post_status`/`estado`
+// como 'publish' em todas as linhas, perdendo o estado real (pending/trash/
+// draft) que ainda existe em `wp_posts` (post_type 'fichas'/'clientes'). Este
+// par de endpoints compara as duas fontes e corrige/recupera o que falta.
+// Uso previsto: correr uma vez o /preview para confirmar o que vai mudar, e
+// depois o POST para aplicar. Remover depois de usado.
+
+const checkRepairSecret = (req, res) => {
+  const secret = process.env.SYNC_SECRET || '';
+  const token = (req.body?.token || req.query?.token || '').toString();
+  if (secret && token !== secret) {
+    res.status(403).json({ error: 'Token inválido' });
+    return false;
+  }
+  return true;
+};
+
+const buildRepairPlan = (callback) => {
+  db.query(
+    `SELECT ID, post_title, post_status, post_author, post_date
+     FROM wp_posts WHERE post_type = 'fichas' AND post_status IN ('pending', 'trash')`,
+    (errF, wpFichas) => {
+      if (errF) return callback(errF);
+
+      db.query(
+        `SELECT ID, post_title, post_status, post_author, post_date
+         FROM wp_posts WHERE post_type = 'clientes' AND post_status IN ('trash', 'draft')`,
+        (errC, wpClientes) => {
+          if (errC) return callback(errC);
+
+          db.query('SELECT legacy_id, post_status FROM fichas WHERE legacy_id IS NOT NULL', (errFT, fichasRows) => {
+            if (errFT) return callback(errFT);
+
+            db.query('SELECT legacy_id, estado FROM clients WHERE legacy_id IS NOT NULL', (errCT, clientsRows) => {
+              if (errCT) return callback(errCT);
+
+              const fichasByLegacy = new Map(fichasRows.map((r) => [Number(r.legacy_id), (r.post_status || '').toLowerCase()]));
+              const clientsByLegacy = new Map(clientsRows.map((r) => [Number(r.legacy_id), (r.estado || '').toLowerCase()]));
+
+              const fichasToUpdate = [];
+              const fichasToInsert = [];
+              (wpFichas || []).forEach((row) => {
+                const id = Number(row.ID);
+                if (fichasByLegacy.has(id)) {
+                  if (fichasByLegacy.get(id) === 'publish' && row.post_status !== 'publish') {
+                    fichasToUpdate.push({ legacy_id: id, post_status: row.post_status, title: row.post_title });
+                  }
+                } else {
+                  fichasToInsert.push({
+                    legacy_id: id,
+                    title: row.post_title || 'Sem título',
+                    post_status: row.post_status,
+                    author: row.post_author ? String(row.post_author) : '',
+                    post_date: row.post_date
+                  });
+                }
+              });
+
+              const clientesToUpdate = [];
+              const clientesToInsert = [];
+              (wpClientes || []).forEach((row) => {
+                const id = Number(row.ID);
+                if (clientsByLegacy.has(id)) {
+                  if (clientsByLegacy.get(id) === 'publish' && row.post_status !== 'publish') {
+                    clientesToUpdate.push({ legacy_id: id, estado: row.post_status, title: row.post_title });
+                  }
+                } else {
+                  clientesToInsert.push({
+                    legacy_id: id,
+                    denominacao_fiscal: row.post_title || 'Sem nome',
+                    estado: row.post_status,
+                    author: row.post_author ? String(row.post_author) : '',
+                    publicado_em: row.post_date
+                  });
+                }
+              });
+
+              callback(null, { fichasToUpdate, fichasToInsert, clientesToUpdate, clientesToInsert });
+            });
+          });
+        }
+      );
+    }
+  );
+};
+
+// GET /api/admin/reparar-estados/preview?token=... - simulação, não escreve nada
+app.get('/api/admin/reparar-estados/preview', (req, res) => {
+  if (!checkRepairSecret(req, res)) return;
+  buildRepairPlan((err, plan) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({
+      resumo: {
+        fichas_a_corrigir: plan.fichasToUpdate.length,
+        fichas_a_recuperar: plan.fichasToInsert.length,
+        clientes_a_corrigir: plan.clientesToUpdate.length,
+        clientes_a_recuperar: plan.clientesToInsert.length
+      },
+      detalhe: plan
+    });
+  });
+});
+
+// POST /api/admin/reparar-estados - aplica as correções/recuperações
+app.post('/api/admin/reparar-estados', (req, res) => {
+  if (!checkRepairSecret(req, res)) return;
+
+  buildRepairPlan((err, plan) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    const tasks = [];
+
+    plan.fichasToUpdate.forEach((item) => {
+      tasks.push((cb) => db.query('UPDATE fichas SET post_status = ? WHERE legacy_id = ?', [item.post_status, item.legacy_id], cb));
+    });
+    plan.fichasToInsert.forEach((item) => {
+      tasks.push((cb) => db.query(
+        'INSERT INTO fichas (legacy_id, title, post_status, author, data_contacto, post_date, created_at) VALUES (?, ?, ?, ?, ?, ?, NOW())',
+        [item.legacy_id, item.title, item.post_status, item.author, item.post_date, item.post_date],
+        cb
+      ));
+    });
+    plan.clientesToUpdate.forEach((item) => {
+      tasks.push((cb) => db.query('UPDATE clients SET estado = ? WHERE legacy_id = ?', [item.estado, item.legacy_id], cb));
+    });
+    plan.clientesToInsert.forEach((item) => {
+      tasks.push((cb) => db.query(
+        'INSERT INTO clients (legacy_id, denominacao_fiscal, estado, author, publicado_em, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())',
+        [item.legacy_id, item.denominacao_fiscal, item.estado, item.author, item.publicado_em],
+        cb
+      ));
+    });
+
+    const errors = [];
+    let index = 0;
+    const runNext = () => {
+      if (index >= tasks.length) {
+        return res.json({
+          success: true,
+          erros: errors,
+          resumo: {
+            fichas_corrigidas: plan.fichasToUpdate.length,
+            fichas_recuperadas: plan.fichasToInsert.length,
+            clientes_corrigidos: plan.clientesToUpdate.length,
+            clientes_recuperados: plan.clientesToInsert.length,
+            falhas: errors.length
+          }
+        });
+      }
+      const task = tasks[index];
+      index += 1;
+      task((taskErr) => {
+        if (taskErr) errors.push(taskErr.message);
+        runNext();
+      });
+    };
+    runNext();
+  });
+});
+
+// ============================================
 // 🔄 NOVOS ENDPOINTS DE SINCRONIZAÇÃO
 // ============================================
 
