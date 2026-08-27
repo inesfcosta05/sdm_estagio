@@ -28,6 +28,8 @@ const MONTHS = [
   { value: '12', label: 'Dez' }
 ];
 
+const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
+
 const slugify = (value) =>
   (value || '')
     .toString()
@@ -127,10 +129,28 @@ const Clientes = () => {
       .catch(() => setComerciais([]));
   }, []);
 
+  const comerciaisMap = useMemo(() => {
+    const map = new Map();
+    comerciais.forEach((item) => {
+      const label = (item.label || item.display_name || item.username || item.value || '').toString().trim();
+      if (!label) return;
+      [item.value, item.username, item.id]
+        .filter((value) => value !== undefined && value !== null && value !== '')
+        .forEach((value) => map.set(normalizeKey(value), label));
+    });
+    return map;
+  }, [comerciais]);
+
   const getNome = (c) => c.denominacao_fiscal || c.nome || c.client_legacy_id || '(sem nome)';
   const getNif = (c) => (c.nif || c.nif_cliente || c.vat || '').toString();
   const normalizeNif = (value) => (value || '').toString().replace(/\D/g, '');
-  const getAutor = (c) => c.comercial_id || c.author || c.autor || '—';
+  const getAutor = (c) => {
+    if (c.autor_nome) return c.autor_nome;
+    const idRaw = c.comercial_id || c.author || c.autor;
+    if (idRaw === undefined || idRaw === null || idRaw === '') return '—';
+    const mapped = comerciaisMap.get(normalizeKey(idRaw));
+    return mapped || idRaw;
+  };
   const getEstado = (c) => {
     const raw = (c.estado || c.post_status || 'publicado').toString().toLowerCase();
     if (raw === 'publish' || raw === 'publicado') return 'publicado';

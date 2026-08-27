@@ -244,16 +244,20 @@ const Fichas = ({ user = null }) => {
     return slugify(decodeHtmlEntities(raw));
   };
   const getCliente = (ficha) => {
-    const raw = ficha.cliente || ficha.nome_cliente || ficha.cliente_nome || ficha.client_name || ficha.denominacao_fiscal || ficha.client_legacy_id || ficha.client_id;
-    if (raw === undefined || raw === null || raw === '') return '—';
-    const mapped = clientesMap.get(normalizeKey(raw));
-    return mapped || raw;
+    const resolvedName = ficha.client_name || ficha.cliente || ficha.nome_cliente || ficha.cliente_nome || ficha.denominacao_fiscal;
+    if (resolvedName) return resolvedName;
+    const idRaw = ficha.client_legacy_id ?? ficha.client_id;
+    if (idRaw === undefined || idRaw === null || idRaw === '') return '—';
+    const mapped = clientesMap.get(normalizeKey(idRaw));
+    return mapped || idRaw;
   };
   const getGestor = (ficha) => {
-    const raw = ficha.author || ficha.autor || ficha.gestor || ficha.comercial_id || ficha.nome_autor;
-    if (raw === undefined || raw === null || raw === '') return '—';
-    const mapped = comerciaisMap.get(normalizeKey(raw));
-    return cleanManagerName(mapped || raw);
+    const resolvedName = ficha.author_name || ficha.gestor_nome || ficha.nome_autor;
+    if (resolvedName) return cleanManagerName(resolvedName);
+    const idRaw = ficha.author || ficha.autor || ficha.gestor || ficha.comercial_id;
+    if (idRaw === undefined || idRaw === null || idRaw === '') return '—';
+    const mapped = comerciaisMap.get(normalizeKey(idRaw));
+    return cleanManagerName(mapped || idRaw);
   };
   const getEstado = (ficha) => normalizeEstado(ficha.estado || ficha.post_status);
   const getData = (ficha) => ficha.data_contacto || ficha.updated_at || ficha.created_at || ficha.post_date;

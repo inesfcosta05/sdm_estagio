@@ -428,11 +428,24 @@ const assertAdminByLogin = (actingLogin, cb) => {
 // FICHAS ✅ (já funciona)
 app.get('/api/fichas', (req, res) => {
   console.log('📋 Fichas pedidas');
-  db.query('SELECT * FROM fichas ORDER BY data_contacto DESC', (err, results) => {
-    if (err) return res.status(500).json({ error: err.message });
-    console.log(`✅ ${results.length} fichas`);
-    res.json(results);
-  });
+  db.query(
+    `SELECT f.*,
+       cl.denominacao_fiscal AS client_name,
+       COALESCE(
+         NULLIF(TRIM(u.nome_mostrado), ''),
+         NULLIF(TRIM(CONCAT(IFNULL(u.nome, ''), ' ', IFNULL(u.apelido, ''))), ''),
+         NULLIF(TRIM(u.name), '')
+       ) AS author_name
+     FROM fichas f
+     LEFT JOIN clients cl ON cl.legacy_id = f.client_legacy_id
+     LEFT JOIN users u ON u.id = CAST(NULLIF(f.author, '') AS UNSIGNED)
+     ORDER BY f.data_contacto DESC`,
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message });
+      console.log(`✅ ${results.length} fichas`);
+      res.json(results);
+    }
+  );
 });
 
 app.get('/api/fichas/:id', (req, res) => {
@@ -636,17 +649,28 @@ app.get('/api/clientes', (req, res) => {
     }
     
     console.log(`✅ Tabela clients OK - ${colunas.length} colunas`);
-    
-    db.query('SELECT * FROM clients ORDER BY COALESCE(publicado_em, created_at, updated_at) DESC, legacy_id DESC', (err2, results) => {
-      if (err2) {
-        console.error('❌ ERRO clients:', err2.message);
-        return res.status(500).json({ error: err2.message });
+
+    db.query(
+      `SELECT c.*,
+         COALESCE(
+           NULLIF(TRIM(u.nome_mostrado), ''),
+           NULLIF(TRIM(CONCAT(IFNULL(u.nome, ''), ' ', IFNULL(u.apelido, ''))), ''),
+           NULLIF(TRIM(u.name), '')
+         ) AS autor_nome
+       FROM clients c
+       LEFT JOIN users u ON u.id = COALESCE(c.comercial_id, CAST(NULLIF(c.author, '') AS UNSIGNED))
+       ORDER BY COALESCE(c.publicado_em, c.created_at, c.updated_at) DESC, c.legacy_id DESC`,
+      (err2, results) => {
+        if (err2) {
+          console.error('❌ ERRO clients:', err2.message);
+          return res.status(500).json({ error: err2.message });
+        }
+
+        console.log(`✅ ${results.length} CLIENTES REAIS com TODOS campos`);
+        console.log('📋 Campos:', Object.keys(results[0] || {}));
+        res.json(results);
       }
-      
-      console.log(`✅ ${results.length} CLIENTES REAIS com TODOS campos`);
-      console.log('📋 Campos:', Object.keys(results[0] || {}));
-      res.json(results);
-    });
+    );
   });
 });
 
