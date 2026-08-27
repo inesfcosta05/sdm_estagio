@@ -220,9 +220,10 @@ const Clientes = () => {
   const toggleOne = (id) => setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const formatData = (d) => {
+    if (!d) return '—';
     try {
       const date = new Date(d);
-      return Number.isNaN(date.getTime()) ? '—' : format(date, "yyyy/MM/dd 'às' HH:mm", { locale: pt });
+      return Number.isNaN(date.getTime()) ? '—' : format(date, 'dd/MM/yyyy HH:mm', { locale: pt });
     } catch {
       return '—';
     }

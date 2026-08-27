@@ -172,9 +172,10 @@ export default function Paginas() {
   const toggleOne = (id) => setSelected((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
 
   const formatData = (value) => {
+    if (!value) return '—';
     try {
       const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? '—' : format(date, "yyyy/MM/dd 'às' HH:mm", { locale: pt });
+      return Number.isNaN(date.getTime()) ? '—' : format(date, 'dd/MM/yyyy HH:mm', { locale: pt });
     } catch {
       return '—';
     }
