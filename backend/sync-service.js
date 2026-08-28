@@ -20,8 +20,22 @@ class SyncService {
     this.lastSync = {};
     this.lastSyncComplete = {};
     this.lastError = null;
+    this.lastFetchStats = {};
     this.isRunning = false;
     this.isSyncing = false;
+  }
+
+  // Counts how many fetched items carry each post_status, so we can see (via
+  // logs / getStatus()) exactly what WordPress sent this cycle — without that,
+  // "pendentes/lixo still show 0" is ambiguous between "WP has none right now"
+  // and "we're failing to write/count what WP sent".
+  static statusBreakdown(items) {
+    const counts = {};
+    items.forEach((item) => {
+      const status = (item.status || 'publish').toString();
+      counts[status] = (counts[status] || 0) + 1;
+    });
+    return counts;
   }
 
   getWordPressAuthHeaders() {
@@ -239,6 +253,10 @@ class SyncService {
 
       console.log(`📝 Sincronizando ${allFichas.length} fichas...`);
 
+      const statusBreakdown = SyncService.statusBreakdown(allFichas);
+      this.lastFetchStats.fichas = statusBreakdown;
+      console.log('  📊 Estados recebidos do WordPress:', JSON.stringify(statusBreakdown));
+
       // One-time visibility into the raw shape WordPress sends for the
       // "cliente" relationship, so we can confirm/adjust extractClientLegacyId
       // above if this WP install exposes it differently than expected.
@@ -341,6 +359,10 @@ class SyncService {
 
       console.log(`👥 Sincronizando ${allClients.length} clientes...`);
 
+      const statusBreakdown = SyncService.statusBreakdown(allClients);
+      this.lastFetchStats.clients = statusBreakdown;
+      console.log('  📊 Estados recebidos do WordPress:', JSON.stringify(statusBreakdown));
+
       for (const client of allClients) {
         await new Promise((resolve, reject) => {
           this.localDb.query(
@@ -430,6 +452,10 @@ class SyncService {
       }
 
       console.log(`📄 Sincronizando ${allPages.length} páginas...`);
+
+      const statusBreakdown = SyncService.statusBreakdown(allPages);
+      this.lastFetchStats.pages = statusBreakdown;
+      console.log('  📊 Estados recebidos do WordPress:', JSON.stringify(statusBreakdown));
 
       for (const page of allPages) {
         await new Promise((resolve, reject) => {
@@ -644,6 +670,9 @@ class SyncService {
       // Detalhe do último pedido autenticado que falhou (endpoint, status HTTP,
       // corpo do erro devolvido pelo WordPress) — null se o último pedido correu bem.
       lastError: this.lastError,
+      // Contagem por post_status do que o WordPress devolveu na última sincronização
+      // completa de cada recurso — ex: { fichas: { publish: 100, pending: 15, trash: 2 } }.
+      lastFetchStats: this.lastFetchStats,
       hasWordPressAuth: this.hasWordPressAuth(),
       wpUrl: this.wpApiUrl
     };
