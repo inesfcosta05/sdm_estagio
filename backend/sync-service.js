@@ -19,6 +19,7 @@ class SyncService {
     this.syncInterval = syncInterval; // 5 minutos por padrão
     this.lastSync = {};
     this.lastSyncComplete = {};
+    this.lastError = null;
     this.isRunning = false;
     this.isSyncing = false;
   }
@@ -43,18 +44,23 @@ class SyncService {
   // WordPress's REST API treats `status=any` as a shorthand for every status
   // EXCEPT 'trash' (trash is intentionally hidden from "any" for safety) — so
   // fetching trashed items requires asking for every native post_status by
-  // name, explicitly including 'trash'.
-  static ALL_NATIVE_STATUSES = 'publish,pending,draft,future,private,trash';
+  // name, explicitly including 'trash'. Deliberately limited to the 4 states
+  // this app actually models (publicado/pendente/rascunho/lixo) — 'future'
+  // and 'private' aren't used anywhere in the UI, and trimming them out
+  // narrows the surface for whatever is rejecting the request with a 400.
+  static ALL_NATIVE_STATUSES = 'publish,pending,draft,trash';
 
   /**
    * Fetches a WP collection across every native post_status (publish, pending,
-   * draft, trash, ...) when authenticated. Returns `{ items, complete }` —
+   * draft, trash) when authenticated. Returns `{ items, complete }` —
    * `complete` is false whenever we fell back to an unauthenticated,
    * publish-only fetch, so callers know NOT to treat that partial result as
    * the full picture (e.g. never delete local rows just because they're
    * missing from a publish-only snapshot).
    */
   async fetchWordPressCollection(resourcePath) {
+    let lastFailure = null;
+
     const collect = async (useEditContext) => {
       const itemsById = new Map();
       const queryParts = [
@@ -74,6 +80,7 @@ class SyncService {
 
         if (wpResponse.status === 400 || wpResponse.status === 404) {
           if (page === 1) {
+            lastFailure = { endpoint, status: wpResponse.status, body: wpResponse.data };
             return null;
           }
 
@@ -81,12 +88,14 @@ class SyncService {
         }
 
         if (wpResponse.status !== 200) {
+          lastFailure = { endpoint, status: wpResponse.status, body: wpResponse.data };
           return null;
         }
 
         const wpData = wpResponse.data;
 
         if (!Array.isArray(wpData)) {
+          lastFailure = { endpoint, status: wpResponse.status, body: wpData };
           return null;
         }
 
@@ -109,10 +118,17 @@ class SyncService {
 
     const preferEdit = this.hasWordPressAuth();
     const primary = await collect(preferEdit);
-    if (primary !== null) return { items: primary, complete: preferEdit };
+    if (primary !== null) {
+      if (preferEdit) this.lastError = null;
+      return { items: primary, complete: preferEdit };
+    }
 
     if (preferEdit) {
-      console.warn('⚠️  Autenticação WordPress falhou — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até a autenticação ser corrigida.');
+      console.warn(
+        '⚠️  Autenticação/pedido WordPress falhou — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.',
+        lastFailure ? { endpoint: lastFailure.endpoint, status: lastFailure.status, wpError: lastFailure.body } : ''
+      );
+      this.lastError = lastFailure;
       const fallback = await collect(false);
       return { items: fallback || [], complete: false };
     }
@@ -210,7 +226,7 @@ class SyncService {
             [
               ficha.id,
               ficha.title?.rendered || ficha.title || 'Sem título',
-              ficha.date || ficha.modified,
+              ficha.date_gmt || ficha.date || ficha.modified_gmt || ficha.modified,
               ficha.status || 'publish',
               'public',
               ficha.author || null
@@ -306,7 +322,7 @@ class SyncService {
               client.author || null,
               client.status || 'publish',
               'public',
-              client.date || null
+              client.date_gmt || client.date || null
             ],
             (err) => {
               if (err) {
@@ -562,7 +578,10 @@ class SyncService {
       });
 
       if (response.status !== 200) {
-        console.log(`  ⚠️  API respondeu com status ${response.status}`);
+        // WordPress's error body (code/message/data.params) is the whole
+        // point — it's what tells us WHY (invalid param, missing capability,
+        // forbidden status, ...) instead of just "something went wrong".
+        console.log(`  ⚠️  API respondeu com status ${response.status}:`, JSON.stringify(response.data));
       }
 
       return { status: response.status, data: response.data };
@@ -582,6 +601,9 @@ class SyncService {
       // true = essa sincronização viu todos os estados nativos (autenticada);
       // false = caiu para o modo sem autenticação (só publicados, sem apagar órfãos).
       lastSyncComplete: this.lastSyncComplete,
+      // Detalhe do último pedido autenticado que falhou (endpoint, status HTTP,
+      // corpo do erro devolvido pelo WordPress) — null se o último pedido correu bem.
+      lastError: this.lastError,
       hasWordPressAuth: this.hasWordPressAuth(),
       wpUrl: this.wpApiUrl
     };

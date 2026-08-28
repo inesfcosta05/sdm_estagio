@@ -1672,7 +1672,7 @@ const WP_API_USER = (process.env.WP_API_USER || '').trim();
 const WP_API_PASS = (process.env.WP_API_PASS || '').trim();
 // WordPress's `status=any` deliberately excludes 'trash' — list every native
 // status by name so authenticated requests can see trashed items too.
-const WP_ALL_STATUSES = 'publish,pending,draft,future,private,trash';
+const WP_ALL_STATUSES = 'publish,pending,draft,trash';
 const WP_API_HEADERS = WP_API_USER && WP_API_PASS
   ? {
       Authorization: `Basic ${Buffer.from(`${WP_API_USER}:${WP_API_PASS}`).toString('base64')}`

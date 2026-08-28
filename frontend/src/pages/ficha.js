@@ -260,7 +260,7 @@ const Fichas = ({ user = null }) => {
     return cleanManagerName(mapped || idRaw);
   };
   const getEstado = (ficha) => normalizeEstado(ficha.estado || ficha.post_status);
-  const getData = (ficha) => ficha.data_contacto || ficha.updated_at || ficha.created_at || ficha.post_date;
+  const getData = (ficha) => ficha.data_contacto || ficha.post_date || ficha.updated_at || ficha.created_at;
   const getId = (ficha) => ficha.id || ficha.legacy_id || ficha.ID;
   const getPreview = (ficha) => ficha.motivo_resumo_contacto || ficha.post_content || ficha.contacto || 'Sem informação adicional.';
   const getAssuntoTratado = (ficha) => toBool(
