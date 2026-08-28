@@ -18,6 +18,7 @@ class SyncService {
     this.wpApiUrl = wpApiUrl || process.env.WP_API_URL || 'https://sdm.celeuma.pt/wp-json';
     this.syncInterval = syncInterval; // 5 minutos por padrão
     this.lastSync = {};
+    this.lastSyncComplete = {};
     this.isRunning = false;
     this.isSyncing = false;
   }
@@ -263,6 +264,7 @@ class SyncService {
       }
 
       this.lastSync.fichas = new Date();
+      this.lastSyncComplete.fichas = complete;
       console.log(`✅ ${allFichas.length} fichas sincronizadas`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar fichas:', error.message);
@@ -352,6 +354,7 @@ class SyncService {
       }
 
       this.lastSync.clients = new Date();
+      this.lastSyncComplete.clients = complete;
       console.log(`✅ ${allClients.length} clientes sincronizados`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar clientes:', error.message);
@@ -449,6 +452,7 @@ class SyncService {
       }
 
       this.lastSync.pages = new Date();
+      this.lastSyncComplete.pages = complete;
       console.log(`✅ ${allPages.length} páginas sincronizadas`);
     } catch (error) {
       console.error('❌ Erro ao sincronizar páginas:', error.message);
@@ -575,6 +579,10 @@ class SyncService {
     return {
       isRunning: this.isRunning,
       lastSync: this.lastSync,
+      // true = essa sincronização viu todos os estados nativos (autenticada);
+      // false = caiu para o modo sem autenticação (só publicados, sem apagar órfãos).
+      lastSyncComplete: this.lastSyncComplete,
+      hasWordPressAuth: this.hasWordPressAuth(),
       wpUrl: this.wpApiUrl
     };
   }
