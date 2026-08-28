@@ -30,6 +30,11 @@ const MONTHS = [
 
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
 
+const toDateValue = (value) => {
+  const parsed = new Date(value || 0);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
 const slugify = (value) =>
   (value || '')
     .toString()
@@ -72,6 +77,7 @@ const Clientes = () => {
   const [search, setSearch] = useState('');
   const [filtroEstado, setFiltroEstado] = useState('tudo');
   const [filtroData, setFiltroData] = useState('');
+  const [dateSortDir, setDateSortDir] = useState(null); // null = ordem por omissão; 'desc' | 'asc' depois de clicar em "Data"
   const [selected, setSelected] = useState([]);
   const [acaoBulk, setAcaoBulk] = useState('-1');
   const [page, setPage] = useState(1);
@@ -194,6 +200,20 @@ const Clientes = () => {
     const matchData = !filtroData ? true : (getData(c) || '').startsWith(filtroData);
     return matchSearch && matchEstado && matchData;
   });
+
+  if (dateSortDir) {
+    filtered.sort((a, b) => {
+      const da = toDateValue(getData(a));
+      const db = toDateValue(getData(b));
+      return dateSortDir === 'asc' ? da - db : db - da;
+    });
+  }
+
+  const toggleDateSort = () => {
+    setDateSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    setPage(1);
+  };
+  const dateSortIcon = dateSortDir === 'asc' ? '▲' : dateSortDir === 'desc' ? '▼' : '⇅';
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / screenOptions.pageSize));
   const safePage = Math.min(page, totalPages);
@@ -615,7 +635,15 @@ const Clientes = () => {
             <th style={thStyle('40px')}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
             <th style={thStyle()}>Título ⇅</th>
             {screenOptions.showAuthor && <th style={thStyle('180px')}>Autor</th>}
-            {screenOptions.showDate && <th style={thStyle('210px', '#2271b1')}>Data ⇅</th>}
+            {screenOptions.showDate && (
+              <th
+                style={{ ...thStyle('210px', '#2271b1'), cursor: 'pointer', userSelect: 'none' }}
+                onClick={toggleDateSort}
+                title="Ordenar por data"
+              >
+                Data {dateSortIcon}
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -770,7 +798,15 @@ const Clientes = () => {
             <th style={thStyle('40px')}><input type="checkbox" checked={allChecked} onChange={toggleAll} /></th>
             <th style={thStyle()}>Título ⇅</th>
             {screenOptions.showAuthor && <th style={thStyle('180px')}>Autor</th>}
-            {screenOptions.showDate && <th style={thStyle('210px', '#2271b1')}>Data ⇅</th>}
+            {screenOptions.showDate && (
+              <th
+                style={{ ...thStyle('210px', '#2271b1'), cursor: 'pointer', userSelect: 'none' }}
+                onClick={toggleDateSort}
+                title="Ordenar por data"
+              >
+                Data {dateSortIcon}
+              </th>
+            )}
           </tr>
         </tfoot>
       </table>

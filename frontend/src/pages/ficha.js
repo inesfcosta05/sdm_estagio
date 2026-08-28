@@ -92,6 +92,11 @@ const toBool = (value) => {
 
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
 
+const toDateValue = (value) => {
+  const parsed = new Date(value || 0);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
 const decodeHtmlEntities = (value) => {
   const text = (value || '').toString();
   if (!text) return '';
@@ -141,6 +146,7 @@ const Fichas = ({ user = null }) => {
   const [filtroEstado, setFiltroEstado] = useState('tudo');
   const [filtroData, setFiltroData] = useState('');
   const [filtroAssunto, setFiltroAssunto] = useState('');
+  const [dateSortDir, setDateSortDir] = useState(null); // null = ordem por omissão; 'desc' | 'asc' depois de clicar em "Data"
   const [selected, setSelected] = useState([]);
   const [acaoBulk, setAcaoBulk] = useState('-1');
   const [page, setPage] = useState(1);
@@ -336,6 +342,11 @@ const Fichas = ({ user = null }) => {
     const safeVisible = !isCurrentUserPrivileged && visible.length === 0 ? [...fichas] : visible;
 
     return safeVisible.sort((a, b) => {
+      if (dateSortDir) {
+        const da = toDateValue(getData(a));
+        const db = toDateValue(getData(b));
+        return dateSortDir === 'asc' ? da - db : db - da;
+      }
       if (isCurrentUserPrivileged) {
         const byGestor = getGestor(a).localeCompare(getGestor(b), 'pt');
         if (byGestor !== 0) return byGestor;
@@ -367,6 +378,12 @@ const Fichas = ({ user = null }) => {
       : !getAssuntoTratado(ficha);
     return matchSearch && matchEstado && matchData && matchAssunto;
   });
+
+  const toggleDateSort = () => {
+    setDateSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'));
+    setPage(1);
+  };
+  const dateSortIcon = dateSortDir === 'asc' ? '▲' : dateSortDir === 'desc' ? '▼' : '⇅';
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / screenOptions.pageSize));
   const safePage = Math.min(page, totalPages);
@@ -814,7 +831,15 @@ const Fichas = ({ user = null }) => {
             <th style={thStyle()}>Título ⇅</th>
             {screenOptions.showClient && <th style={thStyle('220px')}>Cliente</th>}
             {screenOptions.showManager && <th style={thStyle('160px')}>Gestor</th>}
-            {screenOptions.showDate && <th style={thStyle('190px', '#2271b1')}>Data ⇅</th>}
+            {screenOptions.showDate && (
+              <th
+                style={{ ...thStyle('190px', '#2271b1'), cursor: 'pointer', userSelect: 'none' }}
+                onClick={toggleDateSort}
+                title="Ordenar por data"
+              >
+                Data {dateSortIcon}
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -981,7 +1006,15 @@ const Fichas = ({ user = null }) => {
             <th style={thStyle()}>Título ⇅</th>
             {screenOptions.showClient && <th style={thStyle('220px')}>Cliente</th>}
             {screenOptions.showManager && <th style={thStyle('160px')}>Gestor</th>}
-            {screenOptions.showDate && <th style={thStyle('190px', '#2271b1')}>Data ⇅</th>}
+            {screenOptions.showDate && (
+              <th
+                style={{ ...thStyle('190px', '#2271b1'), cursor: 'pointer', userSelect: 'none' }}
+                onClick={toggleDateSort}
+                title="Ordenar por data"
+              >
+                Data {dateSortIcon}
+              </th>
+            )}
           </tr>
         </tfoot>
       </table>
