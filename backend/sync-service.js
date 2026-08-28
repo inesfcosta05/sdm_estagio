@@ -197,6 +197,35 @@ class SyncService {
   }
 
   /**
+   * Pods relationship fields aren't part of the WP core REST schema, so their
+   * exact shape depends on how the "cliente" field is configured to appear in
+   * the REST response (a bare ID, an array of IDs, or an array of nested
+   * objects with an `id`/`ID` key). Try every shape we've seen Pods use and
+   * take the first thing that looks like a real post ID.
+   */
+  extractClientLegacyId(ficha) {
+    const candidates = [
+      ficha.cliente,
+      ficha.client,
+      ficha.fields?.cliente,
+      ficha.pods?.cliente,
+      ficha.acf?.cliente,
+      ficha.meta?.cliente
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null || candidate === '') continue;
+      const value = Array.isArray(candidate) ? candidate[0] : candidate;
+      if (value === undefined || value === null) continue;
+      const id = typeof value === 'object' ? (value.id ?? value.ID) : value;
+      const num = Number(id);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+
+    return null;
+  }
+
+  /**
    * 📋 Sincronizar FICHAS com PAGINAÇÃO
    */
   async syncFichas() {
@@ -210,13 +239,23 @@ class SyncService {
 
       console.log(`📝 Sincronizando ${allFichas.length} fichas...`);
 
+      // One-time visibility into the raw shape WordPress sends for the
+      // "cliente" relationship, so we can confirm/adjust extractClientLegacyId
+      // above if this WP install exposes it differently than expected.
+      const sample = allFichas[0];
+      console.log('  🔍 Amostra de campos da 1ª ficha:', Object.keys(sample).join(', '));
+      console.log('  🔍 Amostra de relação "cliente":', JSON.stringify(sample.cliente ?? sample.client ?? sample.fields?.cliente ?? null));
+
       for (const ficha of allFichas) {
+        const clientLegacyId = this.extractClientLegacyId(ficha);
+
         await new Promise((resolve, reject) => {
           this.localDb.query(
             `INSERT INTO fichas (
-              legacy_id, title, post_date, post_status, post_visibility, author
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              legacy_id, client_legacy_id, title, post_date, post_status, post_visibility, author
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
+              client_legacy_id = COALESCE(VALUES(client_legacy_id), client_legacy_id),
               title = VALUES(title),
               post_date = VALUES(post_date),
               post_status = VALUES(post_status),
@@ -225,6 +264,7 @@ class SyncService {
               updated_at = NOW()`,
             [
               ficha.id,
+              clientLegacyId,
               ficha.title?.rendered || ficha.title || 'Sem título',
               ficha.date_gmt || ficha.date || ficha.modified_gmt || ficha.modified,
               ficha.status || 'publish',
