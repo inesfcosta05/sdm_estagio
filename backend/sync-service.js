@@ -65,89 +65,133 @@ class SyncService {
   static ALL_NATIVE_STATUSES = 'publish,pending,draft,trash';
 
   /**
-   * Fetches a WP collection across every native post_status (publish, pending,
-   * draft, trash) when authenticated. Returns `{ items, complete }` —
-   * `complete` is false whenever we fell back to an unauthenticated,
-   * publish-only fetch, so callers know NOT to treat that partial result as
-   * the full picture (e.g. never delete local rows just because they're
-   * missing from a publish-only snapshot).
+   * Fetches every page of one status value from a WP collection endpoint.
+   * Returns the item array, or `null` if the request failed (in which case
+   * `lastFailureRef.value` is set to the endpoint/status/body for logging).
    */
-  async fetchWordPressCollection(resourcePath) {
-    let lastFailure = null;
+  async collectByStatus(resourcePath, status, useEditContext, lastFailureRef) {
+    const itemsById = new Map();
+    const queryParts = [
+      'per_page=100',
+      `context=${useEditContext ? 'edit' : 'view'}`,
+      `status=${status}`
+    ];
 
-    const collect = async (useEditContext) => {
-      const itemsById = new Map();
-      const queryParts = [
-        'per_page=100',
-        `context=${useEditContext ? 'edit' : 'view'}`
-      ];
+    let page = 1;
+    let hasMore = true;
 
-      queryParts.push(useEditContext ? `status=${SyncService.ALL_NATIVE_STATUSES}` : 'status=publish');
+    while (hasMore) {
+      const separator = resourcePath.includes('?') ? '&' : '?';
+      const endpoint = `${resourcePath}${separator}${queryParts.join('&')}&page=${page}`;
+      const wpResponse = await this.getFromWordPressResponse(endpoint);
 
-      let page = 1;
-      let hasMore = true;
-
-      while (hasMore) {
-        const separator = resourcePath.includes('?') ? '&' : '?';
-        const endpoint = `${resourcePath}${separator}${queryParts.join('&')}&page=${page}`;
-        const wpResponse = await this.getFromWordPressResponse(endpoint);
-
-        if (wpResponse.status === 400 || wpResponse.status === 404) {
-          if (page === 1) {
-            lastFailure = { endpoint, status: wpResponse.status, body: wpResponse.data };
-            return null;
-          }
-
-          break;
-        }
-
-        if (wpResponse.status !== 200) {
-          lastFailure = { endpoint, status: wpResponse.status, body: wpResponse.data };
+      if (wpResponse.status === 400 || wpResponse.status === 401 || wpResponse.status === 403 || wpResponse.status === 404) {
+        if (page === 1) {
+          lastFailureRef.value = { endpoint, status: wpResponse.status, body: wpResponse.data };
           return null;
         }
 
-        const wpData = wpResponse.data;
-
-        if (!Array.isArray(wpData)) {
-          lastFailure = { endpoint, status: wpResponse.status, body: wpData };
-          return null;
-        }
-
-        if (wpData.length === 0) {
-          hasMore = false;
-          break;
-        }
-
-        wpData.forEach((item) => {
-          if (item && item.id !== undefined && item.id !== null && !itemsById.has(item.id)) {
-            itemsById.set(item.id, item);
-          }
-        });
-
-        page++;
+        break;
       }
 
-      return [...itemsById.values()];
-    };
+      if (wpResponse.status !== 200) {
+        lastFailureRef.value = { endpoint, status: wpResponse.status, body: wpResponse.data };
+        return null;
+      }
 
+      const wpData = wpResponse.data;
+
+      if (!Array.isArray(wpData)) {
+        lastFailureRef.value = { endpoint, status: wpResponse.status, body: wpData };
+        return null;
+      }
+
+      if (wpData.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      wpData.forEach((item) => {
+        if (item && item.id !== undefined && item.id !== null && !itemsById.has(item.id)) {
+          itemsById.set(item.id, item);
+        }
+      });
+
+      page++;
+    }
+
+    return [...itemsById.values()];
+  }
+
+  /**
+   * Fetches a WP collection across every native post_status (publish, pending,
+   * draft, trash) when authenticated. Returns `{ items, complete }` —
+   * `complete` is only true when EVERY native status was confirmed reachable,
+   * so callers know not to treat a partial result as the full picture (e.g.
+   * never delete local rows just because they're missing from an incomplete
+   * snapshot).
+   *
+   * Some WordPress installs grant a role enough capability to see
+   * pending/draft posts but not trashed ones (trashing/deleting is commonly
+   * gated behind a stricter capability than editing) — so a combined
+   * `status=publish,pending,draft,trash` request can come back 400/403 even
+   * for a real administrator, purely because ONE of those statuses is
+   * forbidden for that account on this custom post type. Rather than
+   * collapsing straight to "publish only" in that case, we retry each status
+   * on its own and keep whatever the account actually has access to.
+   */
+  async fetchWordPressCollection(resourcePath) {
+    const lastFailureRef = { value: null };
     const preferEdit = this.hasWordPressAuth();
-    const primary = await collect(preferEdit);
-    if (primary !== null) {
+
+    const combined = await this.collectByStatus(resourcePath, SyncService.ALL_NATIVE_STATUSES, preferEdit, lastFailureRef);
+    if (combined !== null) {
       if (preferEdit) this.lastError = null;
-      return { items: primary, complete: preferEdit };
+      return { items: combined, complete: preferEdit };
     }
 
-    if (preferEdit) {
+    if (!preferEdit) {
+      return { items: [], complete: false };
+    }
+
+    console.warn(
+      '⚠️  Pedido combinado de estados falhou — a tentar cada estado em separado (pode faltar capacidade só para alguns, ex: apagar/lixo).',
+      lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
+    );
+
+    const statuses = SyncService.ALL_NATIVE_STATUSES.split(',');
+    const merged = new Map();
+    const okStatuses = [];
+    const failedStatuses = [];
+
+    for (const status of statuses) {
+      const result = await this.collectByStatus(resourcePath, status, true, lastFailureRef);
+      if (result === null) {
+        failedStatuses.push(status);
+        continue;
+      }
+      okStatuses.push(status);
+      result.forEach((item) => merged.set(item.id, item));
+    }
+
+    if (okStatuses.length > 0) {
+      const complete = failedStatuses.length === 0;
+      this.lastError = complete ? null : lastFailureRef.value;
       console.warn(
-        '⚠️  Autenticação/pedido WordPress falhou — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.',
-        lastFailure ? { endpoint: lastFailure.endpoint, status: lastFailure.status, wpError: lastFailure.body } : ''
+        complete
+          ? '✅  Todos os estados obtidos em separado com sucesso.'
+          : `⚠️  Estados obtidos: ${okStatuses.join(', ')}. Sem acesso a: ${failedStatuses.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
       );
-      this.lastError = lastFailure;
-      const fallback = await collect(false);
-      return { items: fallback || [], complete: false };
+      return { items: [...merged.values()], complete };
     }
 
-    return { items: [], complete: false };
+    console.warn(
+      '⚠️  Nenhum estado autenticado foi acessível — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.',
+      lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
+    );
+    this.lastError = lastFailureRef.value;
+    const fallback = await this.collectByStatus(resourcePath, 'publish', false, lastFailureRef);
+    return { items: fallback || [], complete: false };
   }
 
   /**
@@ -461,16 +505,17 @@ class SyncService {
         await new Promise((resolve, reject) => {
           this.localDb.query(
             `INSERT INTO wp_posts (
-              ID, post_author, post_date, post_date_gmt, post_content, post_title,
+              ID, post_author, post_date, post_date_gmt, post_content, post_title, post_excerpt,
               post_status, post_name, post_modified, post_modified_gmt, post_parent,
               menu_order, post_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
               post_author = VALUES(post_author),
               post_date = VALUES(post_date),
               post_date_gmt = VALUES(post_date_gmt),
               post_content = VALUES(post_content),
               post_title = VALUES(post_title),
+              post_excerpt = VALUES(post_excerpt),
               post_status = VALUES(post_status),
               post_modified = VALUES(post_modified),
               post_modified_gmt = VALUES(post_modified_gmt),
@@ -480,13 +525,16 @@ class SyncService {
             [
               page.id,
               Number(page.author) || 1,
-              page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              // post_date must also be GMT (fed a "local site time" string would
+              // reintroduce the same +1h drift already fixed for fichas/clients).
+              page.date_gmt || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
               page.date_gmt || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
               page.content?.rendered || '',
               page.title?.rendered || page.title || 'Sem título',
+              page.excerpt?.rendered || '',
               page.status || 'publish',
               page.slug || `page-${page.id}`,
-              page.modified || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              page.modified_gmt || page.modified || new Date().toISOString().slice(0, 19).replace('T', ' '),
               page.modified_gmt || page.modified || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
               Number(page.parent) || 0,
               Number(page.menu_order) || 0,
