@@ -137,6 +137,44 @@ class SyncService {
     ], lastFailureRef);
   }
 
+  // Pods generates its own REST controller for these two CPTs, and on this
+  // WordPress install it rejects the `status` query param outright (400/403)
+  // no matter what value is sent — combined list, single status, context=edit
+  // or context=view, all equally refused. Forcing status filters on these
+  // routes is pointless, so they skip straight to the no-filter strategy.
+  static NO_STATUS_FILTER_ROUTES = ['/wp/v2/fichas', '/wp/v2/clientes'];
+
+  /**
+   * For CPTs where `status` itself is the rejected parameter (see
+   * NO_STATUS_FILTER_ROUTES above): don't try to force specific states into
+   * the query string at all — just ask for whatever the authenticated
+   * session is allowed to see, with no status filter, and let each item's
+   * own `.status` field (read normally downstream by statusBreakdown() and
+   * the INSERT statements) say what it is.
+   */
+  async fetchWithoutStatusFilter(resourcePath) {
+    const lastFailureRef = { value: null };
+    const preferEdit = this.hasWordPressAuth();
+
+    const items = await this.collectWithoutStatusFilter(resourcePath, preferEdit, lastFailureRef);
+    if (items !== null) {
+      if (preferEdit) this.lastError = null;
+      return { items, complete: preferEdit };
+    }
+
+    if (!preferEdit) {
+      return { items: [], complete: false };
+    }
+
+    console.warn(
+      `⚠️  Pedido autenticado sem filtro de estado falhou para ${resourcePath} — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.`,
+      lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
+    );
+    this.lastError = lastFailureRef.value;
+    const fallback = await this.collectByStatus(resourcePath, 'publish', false, lastFailureRef);
+    return { items: fallback || [], complete: false };
+  }
+
   /**
    * Fetches a WP collection across every native post_status (publish, pending,
    * draft, trash) when authenticated. Returns `{ items, complete }` —
@@ -165,6 +203,10 @@ class SyncService {
    * "everything visible to this user" instead of "publish only").
    */
   async fetchWordPressCollection(resourcePath) {
+    if (SyncService.NO_STATUS_FILTER_ROUTES.some((route) => resourcePath.startsWith(route))) {
+      return this.fetchWithoutStatusFilter(resourcePath);
+    }
+
     const lastFailureRef = { value: null };
     const preferEdit = this.hasWordPressAuth();
 
