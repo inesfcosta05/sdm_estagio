@@ -65,18 +65,13 @@ class SyncService {
   static ALL_NATIVE_STATUSES = 'publish,pending,draft,trash';
 
   /**
-   * Fetches every page of one status value from a WP collection endpoint.
-   * Returns the item array, or `null` if the request failed (in which case
-   * `lastFailureRef.value` is set to the endpoint/status/body for logging).
+   * Fetches every page of a WP collection endpoint for a given query-string
+   * (already fully built, minus `&page=N`). Returns the item array, or `null`
+   * if the request failed (in which case `lastFailureRef.value` is set to the
+   * endpoint/status/body for logging).
    */
-  async collectByStatus(resourcePath, status, useEditContext, lastFailureRef) {
+  async collectRaw(resourcePath, queryParts, lastFailureRef) {
     const itemsById = new Map();
-    const queryParts = [
-      'per_page=100',
-      `context=${useEditContext ? 'edit' : 'view'}`,
-      `status=${status}`
-    ];
-
     let page = 1;
     let hasMore = true;
 
@@ -123,6 +118,25 @@ class SyncService {
     return [...itemsById.values()];
   }
 
+  collectByStatus(resourcePath, status, useEditContext, lastFailureRef) {
+    return this.collectRaw(resourcePath, [
+      'per_page=100',
+      `context=${useEditContext ? 'edit' : 'view'}`,
+      `status=${status}`
+    ], lastFailureRef);
+  }
+
+  /** Same request but with no `status` filter at all — some non-core REST
+   * controllers (Pods' own, for example, differs in places from WordPress's
+   * built-in `WP_REST_Posts_Controller`) default to showing everything an
+   * authenticated request can see rather than defaulting to 'publish'. */
+  collectWithoutStatusFilter(resourcePath, useEditContext, lastFailureRef) {
+    return this.collectRaw(resourcePath, [
+      'per_page=100',
+      `context=${useEditContext ? 'edit' : 'view'}`
+    ], lastFailureRef);
+  }
+
   /**
    * Fetches a WP collection across every native post_status (publish, pending,
    * draft, trash) when authenticated. Returns `{ items, complete }` —
@@ -139,6 +153,16 @@ class SyncService {
    * forbidden for that account on this custom post type. Rather than
    * collapsing straight to "publish only" in that case, we retry each status
    * on its own and keep whatever the account actually has access to.
+   *
+   * If EVERY non-publish status is rejected via `context=edit` (this WP
+   * install's capability gate for the CPT refuses `edit` context outright,
+   * regardless of which status), that's a hard server-side permission wall —
+   * no query trick bypasses a real `current_user_can()` check. Still, some
+   * Pods-registered post types expose a custom REST controller that doesn't
+   * replicate WP core's status-gating exactly, so we try two more things
+   * before giving up: the same statuses without `context=edit`, and a request
+   * with no `status` filter at all (in case a custom controller defaults to
+   * "everything visible to this user" instead of "publish only").
    */
   async fetchWordPressCollection(resourcePath) {
     const lastFailureRef = { value: null };
@@ -174,16 +198,52 @@ class SyncService {
       result.forEach((item) => merged.set(item.id, item));
     }
 
+    const nonPublishOk = okStatuses.filter((status) => status !== 'publish');
+    const nonPublishFailed = failedStatuses.filter((status) => status !== 'publish');
+
+    // Every non-publish status was rejected via context=edit — this account's
+    // capability gate is blocking edit-context on this CPT outright, not just
+    // for a specific status. Try the couple of things that could still work
+    // on a non-standard REST controller before accepting defeat.
+    if (nonPublishOk.length === 0 && nonPublishFailed.length > 0) {
+      console.warn(`⚠️  Todos os estados não-publicados foram recusados com context=edit (${nonPublishFailed.join(', ')}) — a tentar contornar.`);
+
+      for (const status of nonPublishFailed) {
+        const viaView = await this.collectByStatus(resourcePath, status, false, lastFailureRef);
+        if (viaView !== null && viaView.length > 0) {
+          viaView.forEach((item) => merged.set(item.id, item));
+          if (!okStatuses.includes(status)) okStatuses.push(status);
+        }
+      }
+
+      if (okStatuses.filter((status) => status !== 'publish').length === 0) {
+        const noFilterEdit = await this.collectWithoutStatusFilter(resourcePath, true, lastFailureRef);
+        const noFilterView = noFilterEdit === null
+          ? await this.collectWithoutStatusFilter(resourcePath, false, lastFailureRef)
+          : noFilterEdit;
+
+        if (noFilterView) {
+          noFilterView.forEach((item) => {
+            merged.set(item.id, item);
+            const status = (item.status || 'publish').toString();
+            if (status !== 'publish' && !okStatuses.includes(status)) okStatuses.push(status);
+          });
+        }
+      }
+    }
+
+    const stillFailed = statuses.filter((status) => !okStatuses.includes(status));
+
     if (okStatuses.length > 0) {
-      const complete = failedStatuses.length === 0;
+      const complete = stillFailed.length === 0;
 
       // "trash" commonly sits behind a stricter WordPress capability than
       // editing/viewing pending or draft content (deleting vs. editing), so a
       // 400/403 specifically for trash — with everything else reachable — is
       // a known, tolerated limitation, not an incident: don't raise it as an
       // error, just note it once and move on with what we could get.
-      const onlyTrashBlocked = failedStatuses.length === 1
-        && failedStatuses[0] === 'trash'
+      const onlyTrashBlocked = stillFailed.length === 1
+        && stillFailed[0] === 'trash'
         && lastFailureRef.value
         && [400, 403].includes(lastFailureRef.value.status);
 
@@ -194,8 +254,8 @@ class SyncService {
         this.lastError = complete ? null : lastFailureRef.value;
         console.warn(
           complete
-            ? '✅  Todos os estados obtidos em separado com sucesso.'
-            : `⚠️  Estados obtidos: ${okStatuses.join(', ')}. Sem acesso a: ${failedStatuses.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
+            ? '✅  Todos os estados obtidos com sucesso (alguns só depois de contornar o context=edit).'
+            : `⚠️  Estados obtidos: ${okStatuses.join(', ')}. Sem acesso a: ${stillFailed.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
         );
       }
 
@@ -203,7 +263,7 @@ class SyncService {
     }
 
     console.warn(
-      '⚠️  Nenhum estado autenticado foi acessível — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.',
+      '⚠️  Nenhum estado autenticado foi acessível, mesmo depois de contornar o context=edit — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.',
       lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
     );
     this.lastError = lastFailureRef.value;
