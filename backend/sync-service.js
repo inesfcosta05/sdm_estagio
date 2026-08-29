@@ -176,12 +176,29 @@ class SyncService {
 
     if (okStatuses.length > 0) {
       const complete = failedStatuses.length === 0;
-      this.lastError = complete ? null : lastFailureRef.value;
-      console.warn(
-        complete
-          ? '✅  Todos os estados obtidos em separado com sucesso.'
-          : `⚠️  Estados obtidos: ${okStatuses.join(', ')}. Sem acesso a: ${failedStatuses.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
-      );
+
+      // "trash" commonly sits behind a stricter WordPress capability than
+      // editing/viewing pending or draft content (deleting vs. editing), so a
+      // 400/403 specifically for trash — with everything else reachable — is
+      // a known, tolerated limitation, not an incident: don't raise it as an
+      // error, just note it once and move on with what we could get.
+      const onlyTrashBlocked = failedStatuses.length === 1
+        && failedStatuses[0] === 'trash'
+        && lastFailureRef.value
+        && [400, 403].includes(lastFailureRef.value.status);
+
+      if (onlyTrashBlocked) {
+        this.lastError = null;
+        console.log(`ℹ️  Estado "trash" não acessível para esta conta (HTTP ${lastFailureRef.value.status}) — a sincronizar na mesma publish/pending/draft normalmente.`);
+      } else {
+        this.lastError = complete ? null : lastFailureRef.value;
+        console.warn(
+          complete
+            ? '✅  Todos os estados obtidos em separado com sucesso.'
+            : `⚠️  Estados obtidos: ${okStatuses.join(', ')}. Sem acesso a: ${failedStatuses.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
+        );
+      }
+
       return { items: [...merged.values()], complete };
     }
 
@@ -506,9 +523,10 @@ class SyncService {
           this.localDb.query(
             `INSERT INTO wp_posts (
               ID, post_author, post_date, post_date_gmt, post_content, post_title, post_excerpt,
-              post_status, post_name, post_modified, post_modified_gmt, post_parent,
-              menu_order, post_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              post_status, comment_status, ping_status, post_password, post_name, to_ping, pinged,
+              post_modified, post_modified_gmt, post_content_filtered, post_parent, guid,
+              menu_order, post_type, post_mime_type, comment_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
               post_author = VALUES(post_author),
               post_date = VALUES(post_date),
@@ -517,11 +535,17 @@ class SyncService {
               post_title = VALUES(post_title),
               post_excerpt = VALUES(post_excerpt),
               post_status = VALUES(post_status),
+              comment_status = VALUES(comment_status),
+              ping_status = VALUES(ping_status),
               post_modified = VALUES(post_modified),
               post_modified_gmt = VALUES(post_modified_gmt),
+              post_content_filtered = VALUES(post_content_filtered),
               post_parent = VALUES(post_parent),
+              guid = VALUES(guid),
               menu_order = VALUES(menu_order),
-              post_type = VALUES(post_type)`,
+              post_type = VALUES(post_type),
+              post_mime_type = VALUES(post_mime_type),
+              comment_count = VALUES(comment_count)`,
             [
               page.id,
               Number(page.author) || 1,
@@ -533,12 +557,26 @@ class SyncService {
               page.title?.rendered || page.title || 'Sem título',
               page.excerpt?.rendered || '',
               page.status || 'publish',
+              // The rest are columns MySQL has no usable default for (TEXT
+              // columns can't have a DEFAULT at all, so omitting them from the
+              // INSERT is what caused the post_excerpt failure) — send explicit
+              // safe values for every one of them so no future column can
+              // reject an insert the same way.
+              page.comment_status || 'closed',
+              page.ping_status || 'closed',
+              page.password || '',
               page.slug || `page-${page.id}`,
+              '',
+              '',
               page.modified_gmt || page.modified || new Date().toISOString().slice(0, 19).replace('T', ' '),
               page.modified_gmt || page.modified || page.date || new Date().toISOString().slice(0, 19).replace('T', ' '),
+              '',
               Number(page.parent) || 0,
+              page.guid?.rendered || page.link || '',
               Number(page.menu_order) || 0,
-              'page'
+              'page',
+              '',
+              Number(page.comment_count) || 0
             ],
             (err) => {
               if (err) reject(err);
