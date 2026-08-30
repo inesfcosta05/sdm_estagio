@@ -156,6 +156,46 @@ const groupItemsByDate = (items, getDateValue) => {
     }));
 };
 
+const MESES_PT = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+// Groups items by calendar month (year-month), oldest month first, with each
+// group's items sorted chronologically by their exact date — used by
+// "Contactos a Efetuar" so each month gets its own heading (e.g. "Janeiro de
+// 2026") instead of one heading per exact day.
+const groupItemsByMonth = (items, getDateValue) => {
+  const groups = new Map();
+
+  items.forEach((item) => {
+    const dateOnly = toDateOnly(getDateValue(item));
+    const monthKey = dateOnly ? dateOnly.slice(0, 7) : 'sem-data';
+    if (!groups.has(monthKey)) groups.set(monthKey, []);
+    groups.get(monthKey).push(item);
+  });
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === 'sem-data') return 1;
+      if (b === 'sem-data') return -1;
+      return a.localeCompare(b);
+    })
+    .map(([monthKey, groupedItems]) => {
+      const items = [...groupedItems].sort((a, b) => {
+        const da = toDateOnly(getDateValue(a));
+        const db = toDateOnly(getDateValue(b));
+        return da.localeCompare(db);
+      });
+
+      const monthLabel = monthKey === 'sem-data'
+        ? 'Sem data'
+        : `${MESES_PT[Number(monthKey.slice(5, 7)) - 1]} de ${monthKey.slice(0, 4)}`;
+
+      return { monthKey, monthLabel, items };
+    });
+};
+
 export default function Relatorios({ user = null }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -373,7 +413,10 @@ export default function Relatorios({ user = null }) {
   };
 
   const getPropostaData = (ficha) => ficha.data_apresentacao_proposta || ficha.created_at || ficha.updated_at;
-  const getContactoData = (ficha) => ficha.data_proximo_contacto || ficha.data_contacto || ficha.created_at || ficha.updated_at;
+  // "Contactos a Efetuar" só existe para fichas com data do PRÓXIMO contacto
+  // preenchida — sem fallback para data_contacto/created_at/updated_at, que
+  // são datas de contactos já passados, não do que falta fazer.
+  const getContactoData = (ficha) => ficha.data_proximo_contacto;
   const getGestorClienteData = (item) => item.dataContacto;
   const getSummaryFlag = (ficha, names) => names.some((name) => toBool(ficha[name]));
   const getDuracaoLabel = (ficha) => {
@@ -467,13 +510,10 @@ export default function Relatorios({ user = null }) {
   );
 
   const contactosFiltrados = (() => {
-    const contactosBase = visibleFichas.filter((ficha) => {
-      const data = ficha.data_proximo_contacto || ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at;
-      return !!toDateOnly(data);
-    });
+    const contactosBase = visibleFichas.filter((ficha) => !!toDateOnly(ficha.data_proximo_contacto));
 
     const filtrados = submittedDataContactos
-      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto || ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at) === submittedDataContactos)
+      ? contactosBase.filter((ficha) => toDateOnly(ficha.data_proximo_contacto) === submittedDataContactos)
       : contactosBase;
 
     return filtrados
@@ -489,8 +529,8 @@ export default function Relatorios({ user = null }) {
       });
   })();
 
-  const contactosAgrupadosPorData = useMemo(
-    () => groupItemsByDate(contactosFiltrados, getContactoData),
+  const contactosAgrupadosPorMes = useMemo(
+    () => groupItemsByMonth(contactosFiltrados, getContactoData),
     [contactosFiltrados]
   );
 
@@ -799,29 +839,29 @@ export default function Relatorios({ user = null }) {
                 <p style={{ marginTop: 8 }}>Sem contactos para esta data.</p>
               ) : (
                 <div style={listStyle}>
-                  {contactosAgrupadosPorData.map((grupo) => (
-                    <div key={`data-${grupo.dateKey}`} style={dateSectionStyle}>
+                  {contactosAgrupadosPorMes.map((grupo) => (
+                    <div key={`mes-${grupo.monthKey}`} style={dateSectionStyle}>
                       <button
                         type="button"
                         style={dateToggleSimpleStyle}
                         onClick={() => {
                           setExpandedDatasContactos((prev) => ({
                             ...prev,
-                            [grupo.dateKey]: !(prev[grupo.dateKey] ?? true)
+                            [grupo.monthKey]: !(prev[grupo.monthKey] ?? true)
                           }));
                         }}
                       >
-                        <span style={dateChevronSimpleStyle}>{(expandedDatasContactos[grupo.dateKey] ?? true) ? '▼' : '▶'}</span>
-                        <span style={dateHeadingStyle}>{grupo.dateLabel}</span>
+                        <span style={dateChevronSimpleStyle}>{(expandedDatasContactos[grupo.monthKey] ?? true) ? '▼' : '▶'}</span>
+                        <span style={dateHeadingStyle}>{grupo.monthLabel}</span>
                         <span style={dateCountSimpleStyle}>({grupo.items.length})</span>
                       </button>
 
-                      {(expandedDatasContactos[grupo.dateKey] ?? true) && grupo.items.map((ficha) => {
+                      {(expandedDatasContactos[grupo.monthKey] ?? true) && grupo.items.map((ficha) => {
                         const clienteId = getClienteId(ficha);
                         const clienteNome = getClienteNome(ficha);
                         return (
                           <div key={`contacto-${getFichaId(ficha)}`} style={dateRowStyle}>
-                            <span>{getGestor(ficha)} - </span>
+                            <span>{toDatePt(ficha.data_proximo_contacto)} — {getGestor(ficha)} - </span>
                             <button
                               type="button"
                               style={reportLinkStyle}
