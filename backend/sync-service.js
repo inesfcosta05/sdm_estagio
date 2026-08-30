@@ -151,26 +151,40 @@ class SyncService {
    * session is allowed to see, with no status filter, and let each item's
    * own `.status` field (read normally downstream by statusBreakdown() and
    * the INSERT statements) say what it is.
+   *
+   * `context=edit` requires a real editing capability up front and 403s
+   * (`rest_forbidden_context`) immediately for accounts that only have broad
+   * READ access but not full edit rights on this CPT — before WordPress even
+   * gets to deciding which posts to return. `context=view`, sent with the
+   * exact same Basic Auth header, doesn't carry that extra capability gate,
+   * so it's tried first; it can still surface non-public content as long as
+   * the account's role is allowed to read it. `edit` is kept as a fallback
+   * second attempt for the opposite kind of account (edit rights, view
+   * refused for some other reason).
    */
   async fetchWithoutStatusFilter(resourcePath) {
     const lastFailureRef = { value: null };
-    const preferEdit = this.hasWordPressAuth();
 
-    const items = await this.collectWithoutStatusFilter(resourcePath, preferEdit, lastFailureRef);
-    if (items !== null) {
-      if (preferEdit) this.lastError = null;
-      return { items, complete: preferEdit };
+    if (this.hasWordPressAuth()) {
+      const viaView = await this.collectWithoutStatusFilter(resourcePath, false, lastFailureRef);
+      if (viaView !== null) {
+        this.lastError = null;
+        return { items: viaView, complete: true };
+      }
+
+      const viaEdit = await this.collectWithoutStatusFilter(resourcePath, true, lastFailureRef);
+      if (viaEdit !== null) {
+        this.lastError = null;
+        return { items: viaEdit, complete: true };
+      }
+
+      console.warn(
+        `⚠️  Pedido autenticado sem filtro de estado falhou para ${resourcePath} (tentado com context=view e context=edit) — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.`,
+        lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
+      );
+      this.lastError = lastFailureRef.value;
     }
 
-    if (!preferEdit) {
-      return { items: [], complete: false };
-    }
-
-    console.warn(
-      `⚠️  Pedido autenticado sem filtro de estado falhou para ${resourcePath} — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.`,
-      lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
-    );
-    this.lastError = lastFailureRef.value;
     const fallback = await this.collectByStatus(resourcePath, 'publish', false, lastFailureRef);
     return { items: fallback || [], complete: false };
   }
