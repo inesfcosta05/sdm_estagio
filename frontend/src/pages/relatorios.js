@@ -480,6 +480,15 @@ export default function Relatorios({ user = null }) {
     }
   }, [tipo]);
 
+  // Sem filtro de data escolhido, a aba deve mostrar logo todos os contactos
+  // com data do próximo contacto preenchida — não deve depender de um clique
+  // em "Ver contactos a efetuar" para aparecer algo.
+  useEffect(() => {
+    if (tipo === 'contactos-a-efetuar') {
+      setShowContactos(true);
+    }
+  }, [tipo]);
+
   const propostasFiltradas = (() => {
     const byTipo = visibleFichas.filter((ficha) => hasProposta(ficha));
     const byEstado = tipo === 'propostas-adjudicadas'
@@ -836,7 +845,7 @@ export default function Relatorios({ user = null }) {
                 {submittedDataContactos ? `Clientes a contactar em: ${toDatePt(submittedDataContactos)}` : 'Clientes a contactar'}
               </h3>
               {contactosFiltrados.length === 0 ? (
-                <p style={{ marginTop: 8 }}>Sem contactos para esta data.</p>
+                <p style={{ marginTop: 8 }}>{submittedDataContactos ? 'Sem contactos para esta data.' : 'Sem contactos a efetuar.'}</p>
               ) : (
                 <div style={listStyle}>
                   {contactosAgrupadosPorMes.map((grupo) => (
