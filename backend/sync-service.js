@@ -138,55 +138,91 @@ class SyncService {
   }
 
   // Pods generates its own REST controller for these two CPTs, and on this
-  // WordPress install it rejects the `status` query param outright (400/403)
-  // no matter what value is sent — combined list, single status, context=edit
-  // or context=view, all equally refused. Forcing status filters on these
-  // routes is pointless, so they skip straight to the no-filter strategy.
-  static NO_STATUS_FILTER_ROUTES = ['/wp/v2/fichas', '/wp/v2/clientes'];
+  // WordPress install its *listing* behaviour (a request with no `status`
+  // query param at all) ignores authentication entirely and always returns
+  // only `publish` items, no matter which account/context is used — there is
+  // no context/param combination on an unfiltered request that reveals
+  // drafts/pending/trash. What DOES work is asking for one explicit
+  // `status=X` value at a time: WordPress/Pods honours that per request, so
+  // each status has to be fetched individually and merged, rather than
+  // relying on a single "give me everything" call.
+  static PER_STATUS_ONLY_ROUTES = ['/wp/v2/fichas', '/wp/v2/clientes'];
 
   /**
-   * For CPTs where `status` itself is the rejected parameter (see
-   * NO_STATUS_FILTER_ROUTES above): don't try to force specific states into
-   * the query string at all — just ask for whatever the authenticated
-   * session is allowed to see, with no status filter, and let each item's
-   * own `.status` field (read normally downstream by statusBreakdown() and
-   * the INSERT statements) say what it is.
+   * For CPTs where an unfiltered listing silently ignores auth and collapses
+   * to publish-only (see PER_STATUS_ONLY_ROUTES above): fetch each native
+   * status (publish, pending, draft, trash) with its own explicit
+   * `status=X` request and merge the results, instead of trying a single
+   * combined or filter-less request.
    *
    * `context=edit` requires a real editing capability up front and 403s
    * (`rest_forbidden_context`) immediately for accounts that only have broad
-   * READ access but not full edit rights on this CPT — before WordPress even
-   * gets to deciding which posts to return. `context=view`, sent with the
-   * exact same Basic Auth header, doesn't carry that extra capability gate,
-   * so it's tried first; it can still surface non-public content as long as
-   * the account's role is allowed to read it. `edit` is kept as a fallback
-   * second attempt for the opposite kind of account (edit rights, view
-   * refused for some other reason).
+   * READ access but not full edit rights on this CPT. `context=view`, sent
+   * with the exact same Basic Auth header, doesn't carry that extra
+   * capability gate, so it's tried first for each status; `edit` is kept as
+   * a per-status fallback for the opposite kind of account (edit rights,
+   * view refused for some other reason).
+   *
+   * `complete` is only true when every native status was reachable — same
+   * contract as fetchWordPressCollection below — so orphan-deletion is only
+   * ever run against a full picture. A lone failure on `trash` specifically
+   * is tolerated (logged as info, not a warning) since trash commonly sits
+   * behind a stricter capability than editing/viewing, but it still leaves
+   * `complete: false` so orphan cleanup stays skipped that round.
    */
-  async fetchWithoutStatusFilter(resourcePath) {
+  async fetchByIndividualStatuses(resourcePath) {
     const lastFailureRef = { value: null };
+    const statuses = SyncService.ALL_NATIVE_STATUSES.split(',');
+    const merged = new Map();
+    const okStatuses = [];
+    const failedStatuses = [];
+    const useAuth = this.hasWordPressAuth();
 
-    if (this.hasWordPressAuth()) {
-      const viaView = await this.collectWithoutStatusFilter(resourcePath, false, lastFailureRef);
-      if (viaView !== null) {
-        this.lastError = null;
-        return { items: viaView, complete: true };
+    for (const status of statuses) {
+      let result = useAuth ? await this.collectByStatus(resourcePath, status, false, lastFailureRef) : null;
+      if (result === null && useAuth) {
+        result = await this.collectByStatus(resourcePath, status, true, lastFailureRef);
       }
 
-      const viaEdit = await this.collectWithoutStatusFilter(resourcePath, true, lastFailureRef);
-      if (viaEdit !== null) {
-        this.lastError = null;
-        return { items: viaEdit, complete: true };
+      if (result === null) {
+        failedStatuses.push(status);
+        continue;
       }
 
+      okStatuses.push(status);
+      result.forEach((item) => merged.set(item.id, item));
+    }
+
+    if (okStatuses.length === 0) {
       console.warn(
-        `⚠️  Pedido autenticado sem filtro de estado falhou para ${resourcePath} (tentado com context=view e context=edit) — a sincronizar apenas conteúdo publicado. Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.`,
+        `⚠️  Nenhum estado foi acessível individualmente para ${resourcePath} — a sincronizar apenas conteúdo publicado (pedido anónimo). Rascunhos/pendentes/lixo não serão tocados nesta sincronização (não vão ser apagados nem atualizados) até isto ser corrigido.`,
         lastFailureRef.value ? { endpoint: lastFailureRef.value.endpoint, status: lastFailureRef.value.status, wpError: lastFailureRef.value.body } : ''
       );
       this.lastError = lastFailureRef.value;
+      const fallback = await this.collectByStatus(resourcePath, 'publish', false, lastFailureRef);
+      return { items: fallback || [], complete: false };
     }
 
-    const fallback = await this.collectByStatus(resourcePath, 'publish', false, lastFailureRef);
-    return { items: fallback || [], complete: false };
+    const complete = failedStatuses.length === 0;
+
+    const onlyTrashBlocked = failedStatuses.length === 1
+      && failedStatuses[0] === 'trash'
+      && lastFailureRef.value
+      && [400, 403].includes(lastFailureRef.value.status);
+
+    if (onlyTrashBlocked) {
+      this.lastError = null;
+      console.log(`ℹ️  Estado "trash" não acessível para esta conta em ${resourcePath} (HTTP ${lastFailureRef.value.status}) — a sincronizar na mesma com publish/pending/draft.`);
+    } else {
+      this.lastError = complete ? null : lastFailureRef.value;
+      console.warn(
+        complete
+          ? `✅  Todos os estados obtidos com sucesso para ${resourcePath} (pedidos estado a estado).`
+          : `⚠️  Estados obtidos para ${resourcePath}: ${okStatuses.join(', ')}. Sem acesso a: ${failedStatuses.join(', ')} (não serão apagados nem atualizados até isto ser corrigido).`
+      );
+    }
+
+    return { items: [...merged.values()], complete };
   }
 
   /**
@@ -217,8 +253,8 @@ class SyncService {
    * "everything visible to this user" instead of "publish only").
    */
   async fetchWordPressCollection(resourcePath) {
-    if (SyncService.NO_STATUS_FILTER_ROUTES.some((route) => resourcePath.startsWith(route))) {
-      return this.fetchWithoutStatusFilter(resourcePath);
+    if (SyncService.PER_STATUS_ONLY_ROUTES.some((route) => resourcePath.startsWith(route))) {
+      return this.fetchByIndividualStatuses(resourcePath);
     }
 
     const lastFailureRef = { value: null };
