@@ -70,7 +70,7 @@ class SyncService {
    * if the request failed (in which case `lastFailureRef.value` is set to the
    * endpoint/status/body for logging).
    */
-  async collectRaw(resourcePath, queryParts, lastFailureRef) {
+  async collectRaw(resourcePath, queryParts, lastFailureRef, extraHeaders = {}) {
     const itemsById = new Map();
     let page = 1;
     let hasMore = true;
@@ -78,7 +78,7 @@ class SyncService {
     while (hasMore) {
       const separator = resourcePath.includes('?') ? '&' : '?';
       const endpoint = `${resourcePath}${separator}${queryParts.join('&')}&page=${page}`;
-      const wpResponse = await this.getFromWordPressResponse(endpoint);
+      const wpResponse = await this.getFromWordPressResponse(endpoint, extraHeaders);
 
       if (wpResponse.status === 400 || wpResponse.status === 401 || wpResponse.status === 403 || wpResponse.status === 404) {
         if (page === 1) {
@@ -147,6 +147,59 @@ class SyncService {
   // each status has to be fetched individually and merged, rather than
   // relying on a single "give me everything" call.
   static PER_STATUS_ONLY_ROUTES = ['/wp/v2/fichas', '/wp/v2/clientes'];
+
+  hasSyncBypassSecret() {
+    return !!(process.env.WP_SYNC_BYPASS_SECRET || '').trim();
+  }
+
+  /**
+   * Fichas/Clientes are Pods CPTs whose REST permission_callback rejects
+   * context=edit and per-status requests down to publish-only for this
+   * account — even though the account IS a real WordPress Administrator —
+   * because the CPT's registered `capability_type` was never mapped to a
+   * capability actually granted to any role. That's a WordPress/Pods
+   * configuration problem; no REST query parameter can talk around a
+   * permission_callback that checks a specific capability string.
+   *
+   * The real fix lives in a tiny custom endpoint on the WordPress side (see
+   * wordpress-mu-plugin/sdm-sync-bypass.php in this repo) that runs its own
+   * WP_Query directly — bypassing Pods' REST controller and its capability
+   * check entirely — gated by a shared secret header instead of WordPress
+   * capabilities. This is tried FIRST for these two routes; if the secret
+   * isn't configured, or the endpoint hasn't been installed on WordPress yet
+   * (404), it falls straight through to the per-status strategy below so
+   * sync keeps working in the meantime.
+   */
+  async fetchViaSyncBypass(resourcePath) {
+    const secret = (process.env.WP_SYNC_BYPASS_SECRET || '').trim();
+    if (!secret) return null;
+
+    const slug = resourcePath.split('/').filter(Boolean).pop();
+    const lastFailureRef = { value: null };
+    const items = await this.collectRaw(
+      `/sdm-sync/v1/${slug}`,
+      ['per_page=100'],
+      lastFailureRef,
+      { 'X-Sdm-Sync-Secret': secret }
+    );
+
+    if (items === null) {
+      const status = lastFailureRef.value?.status;
+      if (status === 404) {
+        console.log(`ℹ️  Endpoint de bypass /sdm-sync/v1/${slug} ainda não está instalado no WordPress — a usar a estratégia estado a estado.`);
+      } else {
+        console.warn(
+          `⚠️  Endpoint de bypass /sdm-sync/v1/${slug} falhou (HTTP ${status}) — a usar a estratégia estado a estado.`,
+          lastFailureRef.value?.body || ''
+        );
+      }
+      return null;
+    }
+
+    this.lastError = null;
+    console.log(`✅  ${items.length} itens obtidos via endpoint de bypass /sdm-sync/v1/${slug} (todos os estados, sem restrição do Pods).`);
+    return { items, complete: true };
+  }
 
   /**
    * For CPTs where an unfiltered listing silently ignores auth and collapses
@@ -254,6 +307,8 @@ class SyncService {
    */
   async fetchWordPressCollection(resourcePath) {
     if (SyncService.PER_STATUS_ONLY_ROUTES.some((route) => resourcePath.startsWith(route))) {
+      const viaBypass = await this.fetchViaSyncBypass(resourcePath);
+      if (viaBypass !== null) return viaBypass;
       return this.fetchByIndividualStatuses(resourcePath);
     }
 
@@ -870,15 +925,15 @@ class SyncService {
     return response.data;
   }
 
-  async getFromWordPressResponse(endpoint) {
+  async getFromWordPressResponse(endpoint, extraHeaders = {}) {
     try {
       const url = `${this.wpApiUrl}${endpoint}`;
       console.log(`  🔗 Fetching: ${url}`);
-      
+
       const response = await axios.get(url, {
         timeout: 10000,
         validateStatus: () => true, // Não falhar em 404
-        headers: this.getWordPressAuthHeaders()
+        headers: { ...this.getWordPressAuthHeaders(), ...extraHeaders }
       });
 
       if (response.status !== 200) {
@@ -912,6 +967,10 @@ class SyncService {
       // completa de cada recurso — ex: { fichas: { publish: 100, pending: 15, trash: 2 } }.
       lastFetchStats: this.lastFetchStats,
       hasWordPressAuth: this.hasWordPressAuth(),
+      // true = WP_SYNC_BYPASS_SECRET está definida, então fichas/clientes tentam
+      // primeiro o endpoint próprio (wordpress-mu-plugin/sdm-sync-bypass.php) em
+      // vez de pedir estado a estado ao Pods.
+      usingSyncBypass: this.hasSyncBypassSecret(),
       wpUrl: this.wpApiUrl
     };
   }
