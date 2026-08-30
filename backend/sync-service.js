@@ -55,6 +55,26 @@ class SyncService {
     return Object.keys(this.getWordPressAuthHeaders()).length > 0;
   }
 
+  /**
+   * A cheap connectivity check run before each bulk insert loop
+   * (syncFichas/syncClients/syncPages). localDb is expected to be a mysql2
+   * pool, so this also doubles as the "reconnect" the caller needs: a pool's
+   * `.query()` always hands back a fresh, live connection from the pool
+   * rather than reusing one that may have been dropped by the MySQL server's
+   * wait_timeout while the (often slow) WordPress fetch was in flight — this
+   * is what used to surface deep inside a bulk insert as "Can't add new
+   * command when connection is in closed state". Failing fast here, before
+   * a single row of the batch is written, avoids a half-applied sync.
+   */
+  pingLocalDb() {
+    return new Promise((resolve, reject) => {
+      this.localDb.query('SELECT 1', (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  }
+
   // WordPress's REST API treats `status=any` as a shorthand for every status
   // EXCEPT 'trash' (trash is intentionally hidden from "any" for safety) — so
   // fetching trashed items requires asking for every native post_status by
@@ -532,6 +552,13 @@ class SyncService {
       console.log('  🔍 Amostra de campos da 1ª ficha:', Object.keys(sample).join(', '));
       console.log('  🔍 Amostra de relação "cliente":', JSON.stringify(sample.cliente ?? sample.client ?? sample.fields?.cliente ?? null));
 
+      try {
+        await this.pingLocalDb();
+      } catch (pingErr) {
+        console.error(`❌ Ligação à base de dados local indisponível antes de inserir ${allFichas.length} fichas (${pingErr.message}) — a saltar esta ronda.`);
+        return;
+      }
+
       for (const ficha of allFichas) {
         const clientLegacyId = this.extractClientLegacyId(ficha);
 
@@ -631,6 +658,13 @@ class SyncService {
       this.lastFetchStats.clients = statusBreakdown;
       console.log('  📊 Estados recebidos do WordPress:', JSON.stringify(statusBreakdown));
 
+      try {
+        await this.pingLocalDb();
+      } catch (pingErr) {
+        console.error(`❌ Ligação à base de dados local indisponível antes de inserir ${allClients.length} clientes (${pingErr.message}) — a saltar esta ronda.`);
+        return;
+      }
+
       for (const client of allClients) {
         await new Promise((resolve, reject) => {
           this.localDb.query(
@@ -724,6 +758,13 @@ class SyncService {
       const statusBreakdown = SyncService.statusBreakdown(allPages);
       this.lastFetchStats.pages = statusBreakdown;
       console.log('  📊 Estados recebidos do WordPress:', JSON.stringify(statusBreakdown));
+
+      try {
+        await this.pingLocalDb();
+      } catch (pingErr) {
+        console.error(`❌ Ligação à base de dados local indisponível antes de inserir ${allPages.length} páginas (${pingErr.message}) — a saltar esta ronda.`);
+        return;
+      }
 
       for (const page of allPages) {
         await new Promise((resolve, reject) => {

@@ -1,6 +1,24 @@
-require('dotenv').config({
+// Must run before any other require in this file — every module below (in
+// particular ./sync-service) reads process.env lazily at call time, but
+// loading .env first regardless keeps that guarantee explicit rather than
+// incidental.
+const dotenvResult = require('dotenv').config({
   path: require('path').resolve(__dirname, '.env')
 });
+
+if (dotenvResult.error && dotenvResult.error.code !== 'ENOENT') {
+  // ENOENT (no .env file) is normal on Render, where vars come from the
+  // dashboard instead — anything else (e.g. a malformed .env) is worth
+  // surfacing since it can silently leave expected vars unset.
+  console.error('⚠️  Erro ao carregar .env:', dotenvResult.error.message);
+}
+
+// Masked visibility into which critical env vars actually made it into
+// process.env at boot — never the values themselves. Check these lines in
+// the logs first whenever a feature gated by one of them ("WP_SYNC_BYPASS_SECRET
+// não detetada" and similar) appears to be misbehaving.
+['DB_HOST', 'DB_USER', 'DB_NAME', 'WP_API_URL', 'WP_API_USER', 'WP_API_PASS', 'WP_SYNC_BYPASS_SECRET', 'SYNC_SECRET']
+  .forEach((key) => console.log(`  🔧 ${key}: ${process.env[key] ? 'definida' : 'NÃO definida'}`));
 
 const express = require('express');
 const mysql = require('mysql2');
@@ -60,15 +78,28 @@ app.use(
 );
 app.use(express.json());
 
-const db = mysql.createConnection({
+// A pool instead of a single long-lived connection: a lone connection that
+// sits idle (e.g. while a WordPress sync fetch is in flight) can get dropped
+// by the MySQL server's wait_timeout or a network blip, and every query
+// after that fails forever with "Can't add new command when connection is
+// in closed state" until the process restarts. A pool hands each query a
+// live connection on demand and quietly replaces dead ones, so a single
+// dropped connection can no longer take down bulk syncs (clientes/fichas).
+const db = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: dbPassword,
-  database: process.env.DB_NAME || 'wp_migracion'
+  database: process.env.DB_NAME || 'wp_migracion',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000
 });
 
-db.connect(err => {
+db.getConnection((err, connection) => {
   if (err) { console.error('❌ MYSQL FALHOU:', err.message); return; }
+  connection.release();
   console.log('✅ MySQL OK!');
 
   // Garantir que a tabela users existe com a estrutura correta
