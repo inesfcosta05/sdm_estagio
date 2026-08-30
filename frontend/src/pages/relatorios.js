@@ -432,7 +432,7 @@ export default function Relatorios({ user = null }) {
   }, [isCurrentUserPrivileged, gestorOptions, gestor, submittedGC.gestor]);
 
   useEffect(() => {
-    if (tipo === 'gestor-e-clientes') {
+    if (tipo === 'gestores') {
       setShowGestorClientes(true);
     }
   }, [tipo]);
@@ -602,7 +602,7 @@ export default function Relatorios({ user = null }) {
     };
 
     const resumoAoa = [];
-    resumoAoa.push(['Gestor e Clientes']);
+    resumoAoa.push(['Gestores']);
     resumoAoa.push([]);
     resumoAoa.push(['Resumo Global']);
     resumoAoa.push(['Nº de Contactos Agendados', resumoGlobalGestorClientes.agendados]);
@@ -692,7 +692,8 @@ export default function Relatorios({ user = null }) {
     'propostas-adjudicadas': 'Propostas Adjudicadas',
     propostas: 'Propostas',
     'contactos-a-efetuar': 'Contactos a Efetuar',
-    'gestor-e-clientes': 'Gestor e Clientes'
+    gestores: 'Gestores',
+    clientes: 'Clientes'
   };
 
   return (
@@ -844,7 +845,7 @@ export default function Relatorios({ user = null }) {
         </>
       )}
 
-      {tipo === 'gestor-e-clientes' && (
+      {tipo === 'gestores' && (
         <>
           <div style={gcGridStyle}>
             <div style={gcFieldStyle}>
@@ -1027,6 +1028,10 @@ export default function Relatorios({ user = null }) {
             </div>
           )}
         </>
+      )}
+
+      {tipo === 'clientes' && (
+        <p>Conteúdo em preparação.</p>
       )}
     </div>
   );

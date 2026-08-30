@@ -32,7 +32,8 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
       propostasAdj: 'Propostas Adjudicadas',
       propostas: 'Propostas',
       contactos: 'Contactos a Efetuar',
-      gestorClientes: 'Gestor e Clientes'
+      gestores: 'Gestores',
+      relatoriosClientes: 'Clientes'
     },
     en: {
       home: 'Home',
@@ -53,7 +54,8 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
       propostasAdj: 'Awarded Proposals',
       propostas: 'Proposals',
       contactos: 'Contacts to Do',
-      gestorClientes: 'Manager and Clients'
+      gestores: 'Managers',
+      relatoriosClientes: 'Clients'
     }
   }[locale];
   const [openSection, setOpenSection] = useState(null);
@@ -327,11 +329,19 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
               </Nav.Link>
               <Nav.Link
                 as={Link}
-                to="/relatorios?tipo=gestor-e-clientes"
-                onClick={() => setActiveLink('/relatorios?tipo=gestor-e-clientes')}
-                className={`sidebar-sublink ${isActive('/relatorios?tipo=gestor-e-clientes') ? 'active' : ''}`}
+                to="/relatorios?tipo=gestores"
+                onClick={() => setActiveLink('/relatorios?tipo=gestores')}
+                className={`sidebar-sublink ${isActive('/relatorios?tipo=gestores') ? 'active' : ''}`}
               >
-                {labels.gestorClientes}
+                {labels.gestores}
+              </Nav.Link>
+              <Nav.Link
+                as={Link}
+                to="/relatorios?tipo=clientes"
+                onClick={() => setActiveLink('/relatorios?tipo=clientes')}
+                className={`sidebar-sublink ${isActive('/relatorios?tipo=clientes') ? 'active' : ''}`}
+              >
+                {labels.relatoriosClientes}
               </Nav.Link>
             </div>
           )}
@@ -411,7 +421,8 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
                 <Link to="/relatorios?tipo=propostas-adjudicadas" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=propostas-adjudicadas'); setFloatingMenu(null); }}>{labels.propostasAdj}</Link>
                 <Link to="/relatorios?tipo=propostas" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=propostas'); setFloatingMenu(null); }}>{labels.propostas}</Link>
                 <Link to="/relatorios?tipo=contactos-a-efetuar" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=contactos-a-efetuar'); setFloatingMenu(null); }}>{labels.contactos}</Link>
-                <Link to="/relatorios?tipo=gestor-e-clientes" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=gestor-e-clientes'); setFloatingMenu(null); }}>{labels.gestorClientes}</Link>
+                <Link to="/relatorios?tipo=gestores" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=gestores'); setFloatingMenu(null); }}>{labels.gestores}</Link>
+                <Link to="/relatorios?tipo=clientes" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=clientes'); setFloatingMenu(null); }}>{labels.relatoriosClientes}</Link>
               </>
             )}
           </div>
