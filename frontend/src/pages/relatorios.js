@@ -543,6 +543,22 @@ export default function Relatorios({ user = null }) {
     [contactosFiltrados]
   );
 
+  // Debug temporário: se esta aba continuar vazia mesmo depois de clicar em
+  // "Ver contactos a efetuar" sem data escolhida, abrir a consola do browser
+  // aqui mostra se o bloqueio é no filtro (submittedDataContactos com valor
+  // inesperado) ou nos próprios dados (nenhuma ficha visível tem
+  // data_proximo_contacto preenchida, o que já não é um bug de UI).
+  useEffect(() => {
+    if (tipo !== 'contactos-a-efetuar') return;
+    console.debug('[Contactos a Efetuar] estado do filtro:', {
+      dataContactos,
+      submittedDataContactos,
+      totalFichasVisiveis: visibleFichas.length,
+      totalComDataProximoContacto: visibleFichas.filter((f) => !!(f.data_proximo_contacto || '').toString().trim()).length,
+      contactosFiltrados: contactosFiltrados.length
+    });
+  }, [tipo, dataContactos, submittedDataContactos, visibleFichas, contactosFiltrados]);
+
   const gestorClientesFiltrados = (() => {
     const base = visibleFichas.map((ficha) => withDerivedSignals({
       fichaId: getFichaId(ficha),
@@ -830,7 +846,11 @@ export default function Relatorios({ user = null }) {
               type="button"
               style={actionBtn}
               onClick={() => {
-                setSubmittedDataContactos(dataContactos);
+                // dataContactos já é sempre string ('' quando o campo está
+                // vazio), mas normaliza de forma explícita para nunca
+                // propagar null/undefined para o filtro — vazio == mostrar
+                // todos os contactos com data do próximo contacto preenchida.
+                setSubmittedDataContactos(dataContactos || '');
                 setShowContactos(true);
                 setExpandedDatasContactos({});
               }}
