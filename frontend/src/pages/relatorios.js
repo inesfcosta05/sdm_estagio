@@ -515,10 +515,11 @@ export default function Relatorios({ user = null }) {
     const pesquisa = pesquisaPropostas.trim().toLowerCase();
     if (!pesquisa) return byCliente;
 
+    // Só por serviço/descritivo — o cliente já tem o seu próprio filtro
+    // dedicado acima, não faz sentido pesquisar por ele aqui também.
     return byCliente.filter((ficha) => {
       const meta = getPropostaMeta(ficha);
       const composed = [
-        getClienteNome(ficha),
         meta?.descritivo,
         ...(meta?.servicos || []).map((s) => s.servico)
       ].filter(Boolean).join(' ').toLowerCase();
@@ -545,10 +546,11 @@ export default function Relatorios({ user = null }) {
     const pesquisa = pesquisaAdjudicadas.trim().toLowerCase();
     if (!pesquisa) return byCliente;
 
+    // Só por serviço/descritivo — o cliente já tem o seu próprio filtro
+    // dedicado acima, não faz sentido pesquisar por ele aqui também.
     return byCliente.filter((ficha) => {
       const meta = getAdjudicadaMeta(ficha);
       const composed = [
-        getClienteNome(ficha),
         meta?.descritivoFatura,
         ...(meta?.servicos || []).map((s) => s.servico)
       ].filter(Boolean).join(' ').toLowerCase();
@@ -952,7 +954,7 @@ export default function Relatorios({ user = null }) {
             </button>
             <input
               type="search"
-              placeholder="Pesquisar cliente, serviço..."
+              placeholder="Pesquisar por serviço..."
               value={pesquisaAdjudicadas}
               onChange={(e) => setPesquisaAdjudicadas(e.target.value)}
               style={searchInputStyle}
@@ -1000,7 +1002,7 @@ export default function Relatorios({ user = null }) {
             </button>
             <input
               type="search"
-              placeholder="Pesquisar cliente, serviço..."
+              placeholder="Pesquisar por serviço..."
               value={pesquisaPropostas}
               onChange={(e) => setPesquisaPropostas(e.target.value)}
               style={searchInputStyle}
@@ -1476,7 +1478,7 @@ const labelStyle = { fontWeight: 600, fontSize: '0.88rem', color: '#1d2327', min
 const selectStyle = { border: '1px solid #c3c4c7', borderRadius: 3, padding: '5px 8px', fontSize: '0.9rem', minWidth: 260 };
 const dateInputStyle = { border: '1px solid #c3c4c7', borderRadius: 3, padding: '5px 8px', fontSize: '0.9rem' };
 const actionBtn = { background: '#f6f7f7', border: '1px solid #c3c4c7', borderRadius: 3, padding: '5px 12px', fontSize: '0.88rem', cursor: 'pointer', color: '#1d2327' };
-const exportBtn = { background: '#8aaE8c', border: '1px solid #8aaE8c', borderRadius: 3, padding: '5px 12px', fontSize: '0.88rem', cursor: 'pointer', color: '#fff' };
+const exportBtn = { background: '#8aaE8c', border: '1px solid #8aaE8c', borderRadius: 3, padding: '5px 12px', fontSize: '0.88rem', cursor: 'pointer', color: '#fff', whiteSpace: 'nowrap', flexShrink: 0 };
 const clearBtn = { background: 'none', border: 'none', color: 'var(--theme-topbar-start, #2271b1)', fontSize: '0.88rem', cursor: 'pointer', padding: '5px 0' };
 const reportHeading = { fontWeight: 700, fontSize: '1.7rem', margin: '2px 0 12px' };
 const searchInputStyle = { border: '1px solid #c3c4c7', borderRadius: 3, padding: '5px 8px', fontSize: '0.88rem', minWidth: 300 };
