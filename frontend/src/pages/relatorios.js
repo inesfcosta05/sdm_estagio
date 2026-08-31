@@ -291,6 +291,19 @@ export default function Relatorios({ user = null }) {
   const [submittedClienteFicha, setSubmittedClienteFicha] = useState('Todos');
   const [showClienteFicha, setShowClienteFicha] = useState(false);
 
+  // Permite abrir a Ficha de um cliente já pré-selecionada a partir de fora
+  // (ex: o botão "Ver Ficha" na listagem de Clientes), via
+  // /relatorios?tipo=clientes&cliente=<nome>.
+  useEffect(() => {
+    if (tipo !== 'clientes') return;
+    const clienteParam = searchParams.get('cliente');
+    if (!clienteParam) return;
+    setClienteFicha(clienteParam);
+    setSubmittedClienteFicha(clienteParam);
+    setShowClienteFicha(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- só deve correr quando o parâmetro de URL muda, não a cada render
+  }, [tipo, searchParams]);
+
   useEffect(() => {
     let mounted = true;
     const fetchAll = () => Promise.all([
@@ -1390,26 +1403,46 @@ export default function Relatorios({ user = null }) {
                         <span style={dateCountSimpleStyle}>({grupo.items.length})</span>
                       </button>
 
-                      {(expandedDatasContactos[grupo.monthKey] ?? true) && grupo.items.map((ficha) => {
-                        const clienteId = getClienteId(ficha);
-                        const clienteNome = getClienteNome(ficha);
-                        return (
-                          <div key={`contacto-${getFichaId(ficha)}`} style={dateRowStyle}>
-                            <span>{toDatePt(ficha.data_proximo_contacto)} — {getGestor(ficha)} - </span>
-                            <button
-                              type="button"
-                              style={reportLinkStyle}
-                              onClick={() => {
-                                if (clienteId) navigate(`/clientes/${clienteId}/editar`);
-                              }}
-                              disabled={!clienteId}
-                              title={clienteId ? 'Editar cliente' : 'Cliente sem ligação'}
-                            >
-                              {clienteNome}
-                            </button>
-                          </div>
-                        );
-                      })}
+                      {(expandedDatasContactos[grupo.monthKey] ?? true) && (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={servicosTableStyle}>
+                            <thead>
+                              <tr>
+                                <th style={servicosThStyle}>Data</th>
+                                <th style={servicosThStyle}>Gestor</th>
+                                <th style={servicosThStyle}>Cliente</th>
+                                <th style={servicosThStyle}>Tipo</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {grupo.items.map((ficha) => {
+                                const clienteId = getClienteId(ficha);
+                                const clienteNome = getClienteNome(ficha);
+                                return (
+                                  <tr key={`contacto-${getFichaId(ficha)}`}>
+                                    <td style={servicosTdStyle}>{toDatePt(ficha.data_proximo_contacto)}</td>
+                                    <td style={servicosTdStyle}>{getGestor(ficha)}</td>
+                                    <td style={servicosTdStyle}>
+                                      <button
+                                        type="button"
+                                        style={reportLinkStyle}
+                                        onClick={() => {
+                                          if (clienteId) navigate(`/clientes/${clienteId}/editar`);
+                                        }}
+                                        disabled={!clienteId}
+                                        title={clienteId ? 'Editar cliente' : 'Cliente sem ligação'}
+                                      >
+                                        {clienteNome}
+                                      </button>
+                                    </td>
+                                    <td style={servicosTdStyle}>{asText(ficha.tipo_proximo_contacto) || '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2020,7 +2053,6 @@ const dateToggleSimpleStyle = { background: 'none', border: 'none', display: 'in
 const dateChevronSimpleStyle = { color: '#6b7280', fontSize: '0.82rem', transform: 'translateY(-1px)' };
 const dateHeadingStyle = { fontSize: '1rem', fontWeight: 600, color: '#3c434a' };
 const dateCountSimpleStyle = { color: '#6b7280', fontSize: '0.9rem' };
-const dateRowStyle = { fontSize: '1.05rem', lineHeight: 1.35 };
 const detailCardStyle = { borderTop: '1px solid #e5e7eb', padding: '10px 0' };
 const detailLineStyle = { fontSize: '1.02rem', marginBottom: 4, lineHeight: 1.5 };
 const reportLinkStyle = { background: 'none', border: 'none', color: '#005eff', padding: 0, cursor: 'pointer', textAlign: 'left', fontSize: '1.05rem' };

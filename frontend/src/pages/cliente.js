@@ -219,7 +219,7 @@ const Clientes = () => {
   const safePage = Math.min(page, totalPages);
   const pageItems = filtered.slice((safePage - 1) * screenOptions.pageSize, safePage * screenOptions.pageSize);
   const allChecked = pageItems.length > 0 && pageItems.every((c) => selected.includes(getId(c)));
-  const visibleColumnCount = 1 + 1 + (screenOptions.showAuthor ? 1 : 0) + (screenOptions.showDate ? 1 : 0);
+  const visibleColumnCount = 1 + 1 + 1 + (screenOptions.showAuthor ? 1 : 0) + (screenOptions.showDate ? 1 : 0);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -644,6 +644,7 @@ const Clientes = () => {
                 Data {dateSortIcon}
               </th>
             )}
+            <th style={thStyle('130px')}>Ficha</th>
           </tr>
         </thead>
         <tbody>
@@ -685,6 +686,16 @@ const Clientes = () => {
                       <span style={{ color: '#646970' }}>{d ? formatData(d) : '—'}</span>
                     </td>
                   )}
+                  <td style={{ ...tdStyle, verticalAlign: 'middle', textAlign: 'center' }}>
+                    <button
+                      type="button"
+                      style={verFichaBtnStyle}
+                      onClick={() => navigate(`/relatorios?tipo=clientes&cliente=${encodeURIComponent(getNome(c))}`)}
+                      title="Ver ficha detalhada do cliente"
+                    >
+                      Ver Ficha
+                    </button>
+                  </td>
                 </tr>
                 {quickEditId === id && (
                   <tr style={{ background: '#f6f7f7', borderBottom: '1px solid #dcdcde' }}>
@@ -807,6 +818,7 @@ const Clientes = () => {
                 Data {dateSortIcon}
               </th>
             )}
+            <th style={thStyle('130px')}>Ficha</th>
           </tr>
         </tfoot>
       </table>
@@ -841,6 +853,21 @@ const btnStyle = { background: '#f6f7f7', border: '1px solid #c3c4c7', borderRad
 const selectStyle = { border: '1px solid #c3c4c7', borderRadius: 3, padding: '3px 8px', fontSize: '0.88rem' };
 const thStyle = (width, color) => ({ padding: '8px 10px', textAlign: 'left', fontWeight: 600, fontSize: '0.88rem', color: color || '#1d2327', width: width || 'auto', background: '#f6f7f7' });
 const tdStyle = { padding: '8px 10px', verticalAlign: 'top' };
+// Centrado na vertical (não "top" como o resto da tabela) para ficar
+// alinhado com a linha mesmo quando esta tem várias linhas de texto
+// (título + ações, ou estado + data).
+const verFichaBtnStyle = {
+  padding: '6px 12px',
+  fontSize: '0.82rem',
+  fontWeight: 600,
+  border: '1px solid #2271b1',
+  borderRadius: 3,
+  background: '#fff',
+  color: '#2271b1',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  lineHeight: 1.2
+};
 const pagBtnStyle = { background: '#f6f7f7', border: '1px solid #c3c4c7', borderRadius: 3, padding: '2px 7px', fontSize: '0.88rem', cursor: 'pointer' };
 const publishBtnStyle = { background: '#2271b1', border: '1px solid #2271b1', borderRadius: 3, padding: '5px 12px', fontSize: '0.88rem', cursor: 'pointer', color: '#fff', fontWeight: 600 };
 const fieldWrapStyle = { display: 'flex', flexDirection: 'column', gap: 4 };
