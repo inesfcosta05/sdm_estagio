@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+// Used only for the Gestores export: the free "xlsx" (SheetJS Community
+// Edition) package used elsewhere in this file cannot write cell colors/fills
+// into the output file at all — that's a SheetJS Pro-only feature. ExcelJS is
+// a free, actively maintained library that supports real cell styling.
+import ExcelJS from 'exceljs';
 import DOMPurify from 'dompurify';
 import '../api';
 
@@ -179,6 +184,45 @@ const groupItemsByMonth = (items, getDateValue) => {
     });
 };
 
+// Categorias reais confirmadas em wp_postmeta (meta_key "tipo_de_contacto") —
+// qualquer valor fora desta lista (vazio, ou um valor antigo/inesperado) cai
+// em "Outro/Não especificado" em vez de ser ignorado silenciosamente.
+const TIPOS_CONTACTO = ['Telefónico', 'Email', 'Reunião', 'Visita'];
+const TIPO_CONTACTO_OUTRO = 'Outro/Não especificado';
+
+// "Tipo de Cliente" é derivado (não existe como campo nos dados — ver
+// getTipoCliente no componente), sempre um destes três valores.
+const TIPOS_CLIENTE = ['Não Cliente', 'Cliente', 'Novo Cliente'];
+
+// Métricas do resumo (global e por gestor) — mesma função usada nos dois
+// sítios para garantir que os números batem certo entre si.
+const buildResumoMetrics = (items) => {
+  const porTipoContacto = {};
+  TIPOS_CONTACTO.forEach((tipo) => { porTipoContacto[tipo] = 0; });
+  porTipoContacto[TIPO_CONTACTO_OUTRO] = 0;
+
+  const porTipoCliente = {};
+  TIPOS_CLIENTE.forEach((tipo) => { porTipoCliente[tipo] = 0; });
+
+  items.forEach((item) => {
+    const tipoContacto = TIPOS_CONTACTO.includes(item.tipoContacto) ? item.tipoContacto : TIPO_CONTACTO_OUTRO;
+    porTipoContacto[tipoContacto] += 1;
+    porTipoCliente[item.tipoCliente] = (porTipoCliente[item.tipoCliente] || 0) + 1;
+  });
+
+  return {
+    total: items.length,
+    agendados: items.filter((item) => item.sinalAgendado).length,
+    followUp: items.filter((item) => item.sinalFollowUp).length,
+    reforcos: items.filter((item) => item.sinalReforco).length,
+    realizados: items.filter((item) => item.sinalRealizado).length,
+    novos: items.filter((item) => item.sinalNovo).length,
+    desmarcados: items.filter((item) => item.sinalDesmarcado).length,
+    porTipoContacto,
+    porTipoCliente
+  };
+};
+
 export default function Relatorios({ user = null }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -294,6 +338,36 @@ export default function Relatorios({ user = null }) {
       return byName?.id || byName?.legacy_id || null;
     }
     return mapped?.id || mapped?.legacy_id || null;
+  };
+
+  // "Tipo de Cliente" não existe como campo em lado nenhum dos dados
+  // (confirmado diretamente na BD — não há equivalente no WordPress nem
+  // nesta app), por isso é derivado aqui: uma ficha sem cliente resolvido é
+  // "Não Cliente"; a ficha cronologicamente mais antiga de cada cliente é
+  // "Novo Cliente" (primeiro contacto registado); todas as seguintes desse
+  // mesmo cliente são "Cliente". Usa `fichas` (não `visibleFichas`) para que
+  // a comparação de "primeira data" não dependa de quais fichas o utilizador
+  // atual tem permissão para ver.
+  const clientePrimeiraDataMap = useMemo(() => {
+    const map = new Map();
+    fichas.forEach((ficha) => {
+      const clienteId = getClienteId(ficha);
+      if (!clienteId) return;
+      const data = toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at);
+      if (!data) return;
+      const atual = map.get(clienteId);
+      if (!atual || data < atual) map.set(clienteId, data);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getClienteId is a plain closure over clientes/clienteByAnyKey; only `fichas` actually changes what this computes
+  }, [fichas]);
+
+  const getTipoCliente = (ficha, dataContactoStr) => {
+    const clienteId = getClienteId(ficha);
+    if (!clienteId) return 'Não Cliente';
+    const primeira = clientePrimeiraDataMap.get(clienteId);
+    if (primeira && dataContactoStr && dataContactoStr === primeira) return 'Novo Cliente';
+    return 'Cliente';
   };
 
   const gestorMap = useMemo(() => {
@@ -433,24 +507,38 @@ export default function Relatorios({ user = null }) {
   const getDuracaoLabel = (ficha) => {
     const direct = asText(ficha.duracao_contacto, ficha.duracao);
     if (direct) return direct;
-    const ini = asText(ficha.hora_inicio_contacto, ficha.hora_inicio);
-    const fim = asText(ficha.hora_fim_contacto, ficha.hora_fim);
+    // inicio_contacto/fim_contacto são os nomes reais resolvidos pelo backend
+    // (ver GET /api/fichas) — hora_inicio_contacto/hora_inicio nunca existiram.
+    const ini = asText(ficha.inicio_contacto, ficha.hora_inicio_contacto, ficha.hora_inicio);
+    const fim = asText(ficha.fim_contacto, ficha.hora_fim_contacto, ficha.hora_fim);
     if (ini || fim) return `${ini || '--:--'} - ${fim || '--:--'}`;
     return '—';
   };
 
   const withDerivedSignals = (item) => {
     const motivo = `${item.motivoResumo || ''} ${item.motivoTipoProximo || ''}`;
-    const hasNextContact = !!item.dataProximoContacto || !!cleanReportText(item.motivoTipoProximo);
 
     return {
       ...item,
-      sinalRealizado: item.contactoEfetuado || !!item.dataContacto,
-      sinalFollowUp: item.followUp || hasKeyword(motivo, /follow\s*up/),
+      // contacto_efetuado, follow_up e novo_contacto agora vêm de campos reais
+      // e fiáveis (ver GET /api/fichas no backend) — os fallbacks anteriores
+      // (ex: "|| !!item.dataContacto", que tornava sinalRealizado quase sempre
+      // verdadeiro, ou heurísticas por palavra-chave) eram uma compensação
+      // para dados que estavam sempre vazios e já não fazem sentido: com dados
+      // reais, esses fallbacks só introduziam falsos positivos.
+      sinalRealizado: item.contactoEfetuado,
+      sinalFollowUp: item.followUp,
+      sinalNovo: item.novoContacto,
+      // "Reforço pedido" e "Contacto desmarcado" continuam sem campo próprio
+      // nos dados (não fazem parte dos campos validados nesta correção), por
+      // isso mantêm-se como heurística por palavra-chave.
       sinalReforco: item.reforcoPedido || hasKeyword(motivo, /reforc|reforço|insist|voltar\s+a\s+ligar/),
-      sinalNovo: item.novoContacto || hasKeyword(motivo, /novo\s+contact|nova\s+abordagem|prospe/),
       sinalDesmarcado: item.contactoDesmarcado || hasKeyword(motivo, /desmarcad|nao\s+atendeu|não\s+atendeu|sem\s+resposta|nao\s+atende/),
-      sinalAgendado: hasNextContact
+      // "Agendado" passa a depender só de haver mesmo uma data de próximo
+      // contacto marcada — antes também contava só ter um "tipo" de próximo
+      // contacto escolhido sem data nenhuma, o que passou a inflacionar esta
+      // métrica assim que esse campo ficou fiável.
+      sinalAgendado: !!item.dataProximoContacto
     };
   };
   const clienteOptions = (() => {
@@ -616,26 +704,38 @@ export default function Relatorios({ user = null }) {
     });
   }, [tipo, dataContactos, submittedDataContactos, visibleFichas, contactosFiltrados]);
 
-  const gestorClientesFiltrados = (() => {
-    const base = visibleFichas.map((ficha) => withDerivedSignals({
-      fichaId: getFichaId(ficha),
-      fichaTitulo: getFichaTitulo(ficha),
-      gestorNome: getGestor(ficha),
-      clienteNome: getClienteNome(ficha),
-      clienteId: getClienteId(ficha),
-      dataContacto: toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at),
-      dataProximoContacto: toDateOnly(ficha.data_proximo_contacto),
-      duracao: getDuracaoLabel(ficha),
-      tipoContacto: asText(ficha.tipo_contacto, ficha.tipo_contato) || '—',
-      contactoEfetuado: getSummaryFlag(ficha, ['contacto_efetuado', 'contactoEfetuado', 'contacto_efetuado_flag']),
-      motivoResumo: asText(ficha.motivo_resumo_contacto, ficha.motivo_resumo, ficha.post_content) || '—',
-      motivoTipoProximo: asText(ficha.motivo_tipo_proximo_contacto, ficha.tipo_proximo_contacto, ficha.motivo_proximo_contacto) || '—',
-      assuntoTratado: getSummaryFlag(ficha, ['assunto_tratado', 'assuntoTratado', 'assunto_tratado_flag']),
-      followUp: getSummaryFlag(ficha, ['follow_up', 'followUp']),
-      reforcoPedido: getSummaryFlag(ficha, ['reforcos_pedidos_contacto', 'reforco_pedido_contacto', 'reforco_pedido']),
-      novoContacto: getSummaryFlag(ficha, ['novo_contacto', 'novoContacto']),
-      contactoDesmarcado: getSummaryFlag(ficha, ['contacto_desmarcado', 'contactoDesmarcado'])
-    }));
+  // BUG CRÍTICO CORRIGIDO: faltava o "useMemo(" — isto era `(() => {...}, [deps])`,
+  // que o JS interpreta como um *operador vírgula* dentro de parêntesis: cria a
+  // função (nunca a chama), depois avalia [deps] e usa isso como valor final. Ou
+  // seja, gestorClientesFiltrados apontava sempre para [visibleFichas, submittedGC]
+  // — um array com 2 elementos errados — em vez da lista de fichas processada.
+  // Todos os `.filter(item => item.sinalX)` a jusante corriam sobre objetos sem
+  // essas propriedades e devolviam sempre [], daí os relatórios de Gestores
+  // aparecerem persistentemente a zeros/vazios.
+  const gestorClientesFiltrados = useMemo(() => {
+    const base = visibleFichas.map((ficha) => {
+      const dataContactoStr = toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at);
+      return withDerivedSignals({
+        fichaId: getFichaId(ficha),
+        fichaTitulo: getFichaTitulo(ficha),
+        gestorNome: getGestor(ficha),
+        clienteNome: getClienteNome(ficha),
+        clienteId: getClienteId(ficha),
+        tipoCliente: getTipoCliente(ficha, dataContactoStr),
+        dataContacto: dataContactoStr,
+        dataProximoContacto: toDateOnly(ficha.data_proximo_contacto),
+        duracao: getDuracaoLabel(ficha),
+        tipoContacto: asText(ficha.tipo_contacto, ficha.tipo_contato) || '—',
+        contactoEfetuado: getSummaryFlag(ficha, ['contacto_efetuado', 'contactoEfetuado', 'contacto_efetuado_flag']),
+        motivoResumo: asText(ficha.motivo_resumo_contacto, ficha.motivo_resumo, ficha.post_content) || '—',
+        motivoTipoProximo: asText(ficha.motivo_tipo_proximo_contacto, ficha.tipo_proximo_contacto, ficha.motivo_proximo_contacto) || '—',
+        assuntoTratado: getSummaryFlag(ficha, ['assunto_tratado', 'assuntoTratado', 'assunto_tratado_flag']),
+        followUp: getSummaryFlag(ficha, ['follow_up', 'followUp']),
+        reforcoPedido: getSummaryFlag(ficha, ['reforcos_pedidos_contacto', 'reforco_pedido_contacto', 'reforco_pedido']),
+        novoContacto: getSummaryFlag(ficha, ['novo_contacto', 'novoContacto']),
+        contactoDesmarcado: getSummaryFlag(ficha, ['contacto_desmarcado', 'contactoDesmarcado'])
+      });
+    });
 
     const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
     
@@ -661,6 +761,7 @@ export default function Relatorios({ user = null }) {
       if (d !== 0) return d;
       return a.fichaTitulo.localeCompare(b.fichaTitulo, 'pt');
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getFichaId/getGestor/getClienteNome/getClienteId/getDuracaoLabel/withDerivedSignals/getTipoCliente are plain closures recreated every render; visibleFichas and submittedGC are the only inputs that actually change what this computes
   }, [visibleFichas, submittedGC]);
 
   const gestorClientesAgrupadosPorGestor = useMemo(() => {
@@ -676,30 +777,19 @@ export default function Relatorios({ user = null }) {
       .sort(([a], [b]) => a.localeCompare(b, 'pt'))
       .map(([gestorNome, items]) => ({
         gestorNome,
-        resumo: {
-          agendados: items.filter((item) => item.sinalAgendado).length,
-          followUp: items.filter((item) => item.sinalFollowUp).length,
-          reforcos: items.filter((item) => item.sinalReforco).length,
-          realizados: items.filter((item) => item.sinalRealizado).length,
-          novos: items.filter((item) => item.sinalNovo).length,
-          desmarcados: items.filter((item) => item.sinalDesmarcado).length
-        },
+        resumo: buildResumoMetrics(items),
         datas: groupItemsByDate(items, getGestorClienteData)
       }));
   }, [gestorClientesFiltrados]);
 
-  const resumoGlobalGestorClientes = useMemo(() => ({
-    agendados: gestorClientesFiltrados.filter((item) => item.sinalAgendado).length,
-    followUp: gestorClientesFiltrados.filter((item) => item.sinalFollowUp).length,
-    reforcos: gestorClientesFiltrados.filter((item) => item.sinalReforco).length,
-    realizados: gestorClientesFiltrados.filter((item) => item.sinalRealizado).length,
-    novos: gestorClientesFiltrados.filter((item) => item.sinalNovo).length,
-    desmarcados: gestorClientesFiltrados.filter((item) => item.sinalDesmarcado).length
-  }), [gestorClientesFiltrados]);
+  const resumoGlobalGestorClientes = useMemo(
+    () => buildResumoMetrics(gestorClientesFiltrados),
+    [gestorClientesFiltrados]
+  );
 
-  const exportGestorClientesToExcel = () => {
+  const exportGestorClientesToExcel = async () => {
     if (gestorClientesFiltrados.length === 0) return;
-    const workbook = XLSX.utils.book_new();
+    const workbook = new ExcelJS.Workbook();
 
     const usedSheetNames = new Set();
     const getUniqueSheetName = (baseName) => {
@@ -723,54 +813,87 @@ export default function Relatorios({ user = null }) {
       return candidate;
     };
 
-    const resumoAoa = [];
-    resumoAoa.push(['Gestores']);
-    resumoAoa.push([]);
-    resumoAoa.push(['Resumo Global']);
-    resumoAoa.push(['Nº de Contactos Agendados', resumoGlobalGestorClientes.agendados]);
-    resumoAoa.push(['Nº de Follow Up', resumoGlobalGestorClientes.followUp]);
-    resumoAoa.push(['Nº de Reforços de Pedidos de Contacto', resumoGlobalGestorClientes.reforcos]);
-    resumoAoa.push(['Nº de Contactos Realizados', resumoGlobalGestorClientes.realizados]);
-    resumoAoa.push(['Nº de Novos Contactos', resumoGlobalGestorClientes.novos]);
-    resumoAoa.push(['Nº de Contactos Desmarcados', resumoGlobalGestorClientes.desmarcados]);
-    resumoAoa.push([]);
+    const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5E8C' } };
+    const HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } };
+    const SECTION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+    const STRIPE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
+    const THIN_BORDER = { style: 'thin', color: { argb: 'FFD0D7E2' } };
 
-    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoAoa);
-    resumoSheet['!cols'] = [{ wch: 46 }, { wch: 14 }];
-    const resumoSheetName = getUniqueSheetName('Resumo Geral');
-    XLSX.utils.book_append_sheet(workbook, resumoSheet, resumoSheetName);
+    const addTitleRow = (sheet, text) => {
+      const row = sheet.addRow([text]);
+      row.font = { bold: true, size: 14 };
+    };
+    const addSectionRow = (sheet, text) => {
+      const row = sheet.addRow([text]);
+      row.font = { bold: true };
+      row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = SECTION_FILL; });
+    };
+    const addMetricRow = (sheet, label, value) => {
+      const row = sheet.addRow([label, value]);
+      row.getCell(1).font = { bold: false };
+      row.getCell(2).font = { bold: true };
+    };
+    const addBreakdownRows = (sheet, title, breakdown) => {
+      addSectionRow(sheet, title);
+      Object.entries(breakdown).forEach(([label, count]) => {
+        if (count > 0) addMetricRow(sheet, label, count);
+      });
+    };
+    const addResumoBlock = (sheet, resumo) => {
+      addSectionRow(sheet, 'Resumo');
+      addMetricRow(sheet, 'Total de Contactos', resumo.total);
+      addMetricRow(sheet, 'Nº de Contactos Realizados', resumo.realizados);
+      addMetricRow(sheet, 'Nº de Contactos Agendados', resumo.agendados);
+      addMetricRow(sheet, 'Nº de Follow Up', resumo.followUp);
+      addMetricRow(sheet, 'Nº de Reforços de Pedidos de Contacto', resumo.reforcos);
+      addMetricRow(sheet, 'Nº de Novos Contactos', resumo.novos);
+      addMetricRow(sheet, 'Nº de Contactos Desmarcados', resumo.desmarcados);
+      sheet.addRow([]);
+      addBreakdownRows(sheet, 'Por Tipo de Contacto', resumo.porTipoContacto);
+      sheet.addRow([]);
+      addBreakdownRows(sheet, 'Por Tipo de Cliente', resumo.porTipoCliente);
+      sheet.addRow([]);
+    };
+
+    // --- Resumo Geral ---
+    const resumoSheet = workbook.addWorksheet(getUniqueSheetName('Resumo Geral'));
+    resumoSheet.columns = [{ width: 42 }, { width: 16 }];
+    addTitleRow(resumoSheet, 'Gestores');
+    resumoSheet.addRow([]);
+    addResumoBlock(resumoSheet, resumoGlobalGestorClientes);
+
+    // --- Uma folha por gestor, com resumo próprio + tabela de detalhe ---
+    const DETAIL_HEADERS = [
+      'Data', 'Ficha', 'Cliente', 'Tipo de Cliente', 'Duração', 'Tipo de contacto',
+      'Contacto efetuado?', 'Motivo/Resumo do Contacto', 'Motivo/Tipo do Próximo Contacto',
+      'Data do Próximo Contacto', 'Assunto Tratado?'
+    ];
+    const DETAIL_WIDTHS = [14, 42, 32, 14, 12, 16, 16, 46, 34, 18, 14];
 
     gestorClientesAgrupadosPorGestor.forEach((gestorGrupo) => {
-      const aoa = [];
-      aoa.push([`Gestor: ${gestorGrupo.gestorNome}`]);
-      aoa.push([]);
-      aoa.push(['Resumo do Gestor']);
-      aoa.push(['Nº de Contactos Agendados', gestorGrupo.resumo.agendados]);
-      aoa.push(['Nº de Follow Up', gestorGrupo.resumo.followUp]);
-      aoa.push(['Nº de Reforços de Pedidos de Contacto', gestorGrupo.resumo.reforcos]);
-      aoa.push(['Nº de Contactos Realizados', gestorGrupo.resumo.realizados]);
-      aoa.push(['Nº de Novos Contactos', gestorGrupo.resumo.novos]);
-      aoa.push(['Nº de Contactos Desmarcados', gestorGrupo.resumo.desmarcados]);
-      aoa.push([]);
-      aoa.push([
-        'Data',
-        'Ficha',
-        'Cliente',
-        'Duração',
-        'Tipo de contacto',
-        'Contacto efetuado?',
-        'Motivo/Resumo do Contacto',
-        'Motivo/Tipo do Próximo Contacto',
-        'Data do Próximo Contacto',
-        'Assunto Tratado?'
-      ]);
+      const sheet = workbook.addWorksheet(getUniqueSheetName(gestorGrupo.gestorNome));
+      sheet.columns = DETAIL_WIDTHS.map((width) => ({ width }));
 
+      addTitleRow(sheet, `Gestor: ${gestorGrupo.gestorNome}`);
+      sheet.addRow([]);
+      addResumoBlock(sheet, gestorGrupo.resumo);
+
+      const headerRow = sheet.addRow(DETAIL_HEADERS);
+      headerRow.eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill = HEADER_FILL;
+        cell.font = HEADER_FONT;
+        cell.border = { bottom: THIN_BORDER };
+      });
+
+      let rowIndex = 0;
       gestorGrupo.datas.forEach((grupo) => {
         grupo.items.forEach((item) => {
-          aoa.push([
+          rowIndex += 1;
+          const row = sheet.addRow([
             grupo.dateLabel,
             item.fichaTitulo,
             item.clienteNome,
+            item.tipoCliente,
             item.duracao,
             item.tipoContacto,
             item.contactoEfetuado ? 'Sim' : 'Não',
@@ -779,25 +902,12 @@ export default function Relatorios({ user = null }) {
             item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : '—',
             item.assuntoTratado ? 'Sim' : 'Não'
           ]);
+          row.alignment = { vertical: 'top', wrapText: true };
+          if (rowIndex % 2 === 0) {
+            row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = STRIPE_FILL; });
+          }
         });
       });
-
-      const worksheet = XLSX.utils.aoa_to_sheet(aoa);
-      worksheet['!cols'] = [
-        { wch: 18 },
-        { wch: 42 },
-        { wch: 36 },
-        { wch: 14 },
-        { wch: 18 },
-        { wch: 16 },
-        { wch: 48 },
-        { wch: 36 },
-        { wch: 18 },
-        { wch: 16 }
-      ];
-
-      const sheetName = getUniqueSheetName(gestorGrupo.gestorNome);
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     });
 
     const parts = [];
@@ -807,7 +917,16 @@ export default function Relatorios({ user = null }) {
     if (submittedGC.dataFim) parts.push(`ate_${submittedGC.dataFim}`);
     const suffix = parts.length ? `_${parts.join('_').replace(/[^a-z0-9_-]+/gi, '_')}` : '';
 
-    XLSX.writeFile(workbook, `relatorio_gestor_cliente${suffix}.xlsx`);
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `relatorio_gestor_cliente${suffix}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const exportPropostasToExcel = () => {
@@ -1180,14 +1299,7 @@ export default function Relatorios({ user = null }) {
                 <div style={listStyle}>
                   <div style={summaryBoxStyle}>
                     <div style={summaryTitleStyle}>Resumo Global</div>
-                    <div style={summaryGridStyle}>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Agendados</span><strong>{resumoGlobalGestorClientes.agendados}</strong></div>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Follow Up</span><strong>{resumoGlobalGestorClientes.followUp}</strong></div>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Reforços</span><strong>{resumoGlobalGestorClientes.reforcos}</strong></div>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Realizados</span><strong>{resumoGlobalGestorClientes.realizados}</strong></div>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Novos Contactos</span><strong>{resumoGlobalGestorClientes.novos}</strong></div>
-                      <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Desmarcados</span><strong>{resumoGlobalGestorClientes.desmarcados}</strong></div>
-                    </div>
+                    <ResumoMetricsBlock resumo={resumoGlobalGestorClientes} />
                   </div>
 
                   <div style={summaryListSectionStyle}>
@@ -1195,14 +1307,7 @@ export default function Relatorios({ user = null }) {
                     {gestorClientesAgrupadosPorGestor.map((gestorGrupo) => (
                       <div key={`gc-summary-${gestorGrupo.gestorNome}`} style={summaryBoxStyle}>
                         <div style={summaryTitleStyle}>Sumário para Gestor: {gestorGrupo.gestorNome}</div>
-                        <div style={summaryGridStyle}>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Agendados</span><strong>{gestorGrupo.resumo.agendados}</strong></div>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Follow Up</span><strong>{gestorGrupo.resumo.followUp}</strong></div>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Reforços</span><strong>{gestorGrupo.resumo.reforcos}</strong></div>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Realizados</span><strong>{gestorGrupo.resumo.realizados}</strong></div>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Novos Contactos</span><strong>{gestorGrupo.resumo.novos}</strong></div>
-                          <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Desmarcados</span><strong>{gestorGrupo.resumo.desmarcados}</strong></div>
-                        </div>
+                        <ResumoMetricsBlock resumo={gestorGrupo.resumo} />
                       </div>
                     ))}
                   </div>
@@ -1217,9 +1322,13 @@ export default function Relatorios({ user = null }) {
                           type="button"
                           style={gestorToggleStyle}
                           onClick={() => {
+                            // Tem de usar o mesmo "?? false" da leitura (isGestorOpen)
+                            // acima — com "?? true" aqui, o primeiro clique não
+                            // tinha efeito visível (false -> false) e só o segundo
+                            // clique é que abria de facto a secção.
                             setExpandedGestoresClientes((prev) => ({
                               ...prev,
-                              [gestorGrupo.gestorNome]: !(prev[gestorGrupo.gestorNome] ?? true)
+                              [gestorGrupo.gestorNome]: !(prev[gestorGrupo.gestorNome] ?? false)
                             }));
                           }}
                         >
@@ -1237,9 +1346,11 @@ export default function Relatorios({ user = null }) {
                                     type="button"
                                     style={dateToggleSimpleStyle}
                                     onClick={() => {
+                                      // Mesmo "?? false" que isDateOpen usa na leitura —
+                                      // ver comentário equivalente no toggle do gestor acima.
                                       setExpandedDatasGestorClientes((prev) => ({
                                         ...prev,
-                                        [`${gestorGrupo.gestorNome}::${grupo.dateKey}`]: !(prev[`${gestorGrupo.gestorNome}::${grupo.dateKey}`] ?? true)
+                                        [`${gestorGrupo.gestorNome}::${grupo.dateKey}`]: !(prev[`${gestorGrupo.gestorNome}::${grupo.dateKey}`] ?? false)
                                       }));
                                     }}
                                   >
@@ -1269,6 +1380,7 @@ export default function Relatorios({ user = null }) {
                                           </div>
                                           <div style={detailLineStyle}><strong>Duração:</strong> {item.duracao}</div>
                                           <div style={detailLineStyle}><strong>Tipo de contacto:</strong> {item.tipoContacto}</div>
+                                          <div style={detailLineStyle}><strong>Tipo de cliente:</strong> {item.tipoCliente}</div>
                                           <div style={detailLineStyle}><strong>Contacto efetuado?</strong> {item.contactoEfetuado ? 'Sim' : 'Não'}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Resumo do Contacto:</strong> {item.motivoResumo}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Tipo do Próximo Contacto:</strong> {item.motivoTipoProximo}</div>
@@ -1298,6 +1410,40 @@ export default function Relatorios({ user = null }) {
         <p>Conteúdo em preparação.</p>
       )}
     </div>
+  );
+}
+
+// Bloco de métricas do resumo (usado tanto no Resumo Global como em cada
+// Sumário por Gestor) — cartões de contagem + as duas repartições novas
+// (Por Tipo de Contacto / Por Tipo de Cliente), omitindo categorias a zero
+// para não poluir o resumo com badges vazios.
+function ResumoMetricsBlock({ resumo }) {
+  return (
+    <>
+      <div style={summaryGridStyle}>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Total de Contactos</span><strong>{resumo.total}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Realizados</span><strong>{resumo.realizados}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Agendados</span><strong>{resumo.agendados}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Follow Up</span><strong>{resumo.followUp}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Reforços</span><strong>{resumo.reforcos}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Novos Contactos</span><strong>{resumo.novos}</strong></div>
+        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Desmarcados</span><strong>{resumo.desmarcados}</strong></div>
+      </div>
+
+      <div style={breakdownRowStyle}>
+        <span style={breakdownLabelStyle}>Por Tipo de Contacto:</span>
+        {Object.entries(resumo.porTipoContacto).filter(([, count]) => count > 0).map(([tipoLabel, count]) => (
+          <span key={tipoLabel} style={breakdownBadgeStyle}>{tipoLabel}: <strong>{count}</strong></span>
+        ))}
+      </div>
+
+      <div style={breakdownRowStyle}>
+        <span style={breakdownLabelStyle}>Por Tipo de Cliente:</span>
+        {Object.entries(resumo.porTipoCliente).filter(([, count]) => count > 0).map(([tipoLabel, count]) => (
+          <span key={tipoLabel} style={breakdownBadgeStyle}>{tipoLabel}: <strong>{count}</strong></span>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -1489,6 +1635,9 @@ const summaryTitleStyle = { fontSize: '1.1rem', fontWeight: 500, marginBottom: 6
 const summaryGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 };
 const summaryMetricCardStyle = { background: '#f6f8fb', border: '1px solid #dce3ea', borderRadius: 8, padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
 const summaryMetricLabelStyle = { color: '#4b5563', fontSize: '0.88rem' };
+const breakdownRowStyle = { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 8 };
+const breakdownLabelStyle = { fontSize: '0.85rem', fontWeight: 600, color: '#4b5563' };
+const breakdownBadgeStyle = { background: '#eef2f7', border: '1px solid #dce3ea', borderRadius: 999, padding: '2px 10px', fontSize: '0.85rem', color: '#1d2327' };
 const summaryListSectionStyle = { marginTop: 10 };
 const detailReportsSectionStyle = { marginTop: 16, paddingTop: 10, borderTop: '1px solid #e5e7eb' };
 const subHeadingStyle = { fontSize: '1.02rem', fontWeight: 600, color: '#374151', marginBottom: 6 };

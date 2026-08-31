@@ -457,6 +457,76 @@ const assertAdminByLogin = (actingLogin, cb) => {
 };
 
 // FICHAS ✅ (já funciona)
+// The client relation on legacy fichas wasn't migrated into `client_legacy_id`
+// (it's NULL for practically every row) — the real link still lives in the
+// WordPress Pods relationship table (`wp_podsrel`, pod "fichas" field "cliente" =
+// pod_id 13 / field_id 15), so resolve through it, falling back to the direct
+// column in case it's ever populated too.
+//
+// Same story for every contact-tracking field below (tipo de contacto, data
+// do contacto, contacto efetuado, follow up, ...): the WordPress REST API
+// for this CPT doesn't expose Pods custom fields at all (confirmed directly
+// against the live site — even authenticated, /wp/v2/fichas only returns
+// core post fields), so the periodic sync never had a way to bring any of
+// them over and every one of these `fichas.*` columns is NULL for every
+// WP-synced row. The real values live in WordPress's own `wp_postmeta`
+// table (migrated wholesale into this same database) under different field
+// names than this app uses — confirmed directly in the DB before writing
+// this query:
+//   data_do_proximo_contacto   -> data_proximo_contacto (YYYYMMDD)
+//   tipo_de_contacto           -> tipo_contacto (Telefónico/Email/Reunião/Visita)
+//   pessoa_de_contacto         -> pessoa_contacto
+//   data_do_contacto           -> data_contacto (YYYYMMDD)
+//   inicio_do_contacto         -> inicio_contacto (HH:MM:SS)
+//   fim_do_contacto            -> fim_contacto (HH:MM:SS)
+//   motivoresumo_do_contacto   -> motivo_resumo_contacto
+//   contacto_efetuado          -> contacto_efetuado (same name, "1"/"0")
+//   follow_up                  -> follow_up (same name, "1"/"0")
+//   novo_contacto              -> novo_contacto (same name, "1"/"0")
+//   tipo_do_proximo_contacto   -> tipo_proximo_contacto
+//   assunto_tratado            -> assunto_tratado (same name, "1"/"0")
+// Resolved the same way client_name is: one pivoted subquery joined once
+// (cheaper than one LEFT JOIN per field), read live at request time,
+// preferring a value set directly through this app's own ficha edit form
+// over the WordPress one. Shared by GET /api/fichas and GET /api/fichas/:id.
+const CONTACT_META_SUBQUERY = `(
+  SELECT
+    post_id,
+    MAX(CASE WHEN meta_key = 'data_do_proximo_contacto' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_proximo_contacto,
+    MAX(CASE WHEN meta_key = 'tipo_de_contacto' THEN meta_value END) AS tipo_contacto,
+    MAX(CASE WHEN meta_key = 'pessoa_de_contacto' THEN meta_value END) AS pessoa_contacto,
+    MAX(CASE WHEN meta_key = 'data_do_contacto' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_contacto,
+    MAX(CASE WHEN meta_key = 'inicio_do_contacto' THEN meta_value END) AS inicio_contacto,
+    MAX(CASE WHEN meta_key = 'fim_do_contacto' THEN meta_value END) AS fim_contacto,
+    MAX(CASE WHEN meta_key = 'motivoresumo_do_contacto' THEN meta_value END) AS motivo_resumo_contacto,
+    MAX(CASE WHEN meta_key = 'contacto_efetuado' THEN meta_value END) AS contacto_efetuado,
+    MAX(CASE WHEN meta_key = 'follow_up' THEN meta_value END) AS follow_up,
+    MAX(CASE WHEN meta_key = 'novo_contacto' THEN meta_value END) AS novo_contacto,
+    MAX(CASE WHEN meta_key = 'tipo_do_proximo_contacto' THEN meta_value END) AS tipo_proximo_contacto,
+    MAX(CASE WHEN meta_key = 'assunto_tratado' THEN meta_value END) AS assunto_tratado
+  FROM wp_postmeta
+  WHERE meta_key IN (
+    'data_do_proximo_contacto', 'tipo_de_contacto', 'pessoa_de_contacto', 'data_do_contacto',
+    'inicio_do_contacto', 'fim_do_contacto', 'motivoresumo_do_contacto', 'contacto_efetuado',
+    'follow_up', 'novo_contacto', 'tipo_do_proximo_contacto', 'assunto_tratado'
+  )
+  GROUP BY post_id
+) pm`;
+
+const CONTACT_META_SELECT = `
+     COALESCE(f.data_proximo_contacto, pm.data_proximo_contacto) AS data_proximo_contacto,
+     COALESCE(NULLIF(f.tipo_contacto, ''), pm.tipo_contacto) AS tipo_contacto,
+     COALESCE(NULLIF(f.pessoa_contacto, ''), pm.pessoa_contacto) AS pessoa_contacto,
+     COALESCE(f.data_contacto, pm.data_contacto) AS data_contacto,
+     COALESCE(f.inicio_contacto, pm.inicio_contacto) AS inicio_contacto,
+     COALESCE(f.fim_contacto, pm.fim_contacto) AS fim_contacto,
+     COALESCE(NULLIF(f.motivo_resumo_contacto, ''), pm.motivo_resumo_contacto) AS motivo_resumo_contacto,
+     COALESCE(f.contacto_efetuado, pm.contacto_efetuado) AS contacto_efetuado,
+     COALESCE(f.follow_up, pm.follow_up) AS follow_up,
+     COALESCE(f.novo_contacto, pm.novo_contacto) AS novo_contacto,
+     COALESCE(NULLIF(f.tipo_proximo_contacto, ''), pm.tipo_proximo_contacto) AS tipo_proximo_contacto,
+     COALESCE(f.assunto_tratado, pm.assunto_tratado) AS assunto_tratado`;
+
 app.get('/api/fichas', (req, res) => {
   console.log('📋 Fichas pedidas');
 
@@ -472,35 +542,17 @@ app.get('/api/fichas', (req, res) => {
     res.json(results);
   };
 
-  // The client relation on legacy fichas wasn't migrated into `client_legacy_id`
-  // (it's NULL for practically every row) — the real link still lives in the
-  // WordPress Pods relationship table (`wp_podsrel`, pod "fichas" field "cliente" =
-  // pod_id 13 / field_id 15), so resolve through it, falling back to the direct
-  // column in case it's ever populated too.
-  //
-  // Same story for "data do próximo contacto": the WordPress REST API for this
-  // CPT doesn't expose Pods custom fields at all (confirmed directly against
-  // the live site — even authenticated, /wp/v2/fichas only returns core post
-  // fields), so the periodic sync never had a way to bring it over and
-  // `fichas.data_proximo_contacto` is NULL for every WP-synced row. The real
-  // value lives in WordPress's own `wp_postmeta` table (meta_key
-  // "data_do_proximo_contacto" — note "do", not the app's "proximo" naming —
-  // stored as a plain YYYYMMDD string), which was migrated wholesale into this
-  // same database, so it's resolved here the same way client_name is: read
-  // live at request time, preferring a value set directly through this app's
-  // own ficha edit form over the WordPress one.
   db.query(
     `SELECT f.*,
        COALESCE(cl_direct.denominacao_fiscal, cl_pods.denominacao_fiscal) AS client_name,
-       ${AUTHOR_NAME_EXPR},
-       COALESCE(f.data_proximo_contacto, STR_TO_DATE(pm_proximo.meta_value, '%Y%m%d')) AS data_proximo_contacto
+       ${AUTHOR_NAME_EXPR},${CONTACT_META_SELECT}
      FROM fichas f
      LEFT JOIN clients cl_direct ON cl_direct.legacy_id = f.client_legacy_id
      LEFT JOIN wp_podsrel pr ON pr.pod_id = 13 AND pr.field_id = 15 AND pr.item_id = f.legacy_id
      LEFT JOIN clients cl_pods ON cl_pods.legacy_id = pr.related_item_id
      LEFT JOIN users u ON u.id = CAST(NULLIF(f.author, '') AS UNSIGNED)
-     LEFT JOIN wp_postmeta pm_proximo ON pm_proximo.post_id = f.legacy_id AND pm_proximo.meta_key = 'data_do_proximo_contacto'
-     ORDER BY f.data_contacto DESC`,
+     LEFT JOIN ${CONTACT_META_SUBQUERY} ON pm.post_id = f.legacy_id
+     ORDER BY COALESCE(f.data_contacto, pm.data_contacto) DESC`,
     (err, results) => {
       if (!err) return respond(null, results);
 
@@ -508,13 +560,12 @@ app.get('/api/fichas', (req, res) => {
       db.query(
         `SELECT f.*,
            cl_direct.denominacao_fiscal AS client_name,
-           ${AUTHOR_NAME_EXPR},
-           COALESCE(f.data_proximo_contacto, STR_TO_DATE(pm_proximo.meta_value, '%Y%m%d')) AS data_proximo_contacto
+           ${AUTHOR_NAME_EXPR},${CONTACT_META_SELECT}
          FROM fichas f
          LEFT JOIN clients cl_direct ON cl_direct.legacy_id = f.client_legacy_id
          LEFT JOIN users u ON u.id = CAST(NULLIF(f.author, '') AS UNSIGNED)
-         LEFT JOIN wp_postmeta pm_proximo ON pm_proximo.post_id = f.legacy_id AND pm_proximo.meta_key = 'data_do_proximo_contacto'
-         ORDER BY f.data_contacto DESC`,
+         LEFT JOIN ${CONTACT_META_SUBQUERY} ON pm.post_id = f.legacy_id
+         ORDER BY COALESCE(f.data_contacto, pm.data_contacto) DESC`,
         respond
       );
     }
@@ -644,14 +695,13 @@ app.get('/api/fichas/:id', (req, res) => {
     return res.status(400).json({ error: 'ID de ficha inválido' });
   }
 
-  // Same wp_postmeta fallback as GET /api/fichas — without it, opening a
-  // ficha to edit would show a blank "Data do Próximo Contacto" even though
-  // the reports tab correctly resolves and displays a value for it.
+  // Same wp_postmeta resolution as GET /api/fichas — without it, opening a
+  // ficha to edit would show blank contact-tracking fields even though the
+  // reports tab correctly resolves and displays values for them.
   db.query(
-    `SELECT f.*,
-       COALESCE(f.data_proximo_contacto, STR_TO_DATE(pm_proximo.meta_value, '%Y%m%d')) AS data_proximo_contacto
+    `SELECT f.*,${CONTACT_META_SELECT}
      FROM fichas f
-     LEFT JOIN wp_postmeta pm_proximo ON pm_proximo.post_id = f.legacy_id AND pm_proximo.meta_key = 'data_do_proximo_contacto'
+     LEFT JOIN ${CONTACT_META_SUBQUERY} ON pm.post_id = f.legacy_id
      WHERE f.id = ? OR f.legacy_id = ? LIMIT 1`,
     [id, id],
     (err, rows) => {
