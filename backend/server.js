@@ -908,6 +908,51 @@ app.delete('/api/fichas/:id', (req, res) => {
 });
 
 // CLIENTES ✅ **CORRIGIDO** - SÓ tabela real
+// Same story as CONTACT_META_SUBQUERY for fichas: several `clients` columns
+// come back NULL for every WP-synced row because the REST sync never wrote
+// them, and the real values live in wp_postmeta under different field names.
+// Confirmed directly in the DB before writing this (some fields, e.g. morada
+// and nif, DO sync correctly through a different path already and are
+// ~95% filled — the fallback here only fills the remaining gaps for those):
+//   comercial                          -> comercial_id (gestor responsável)
+//   pessoa_de_contacto_-_telefone_email -> pessoa_contacto_telefone_email
+//   contacto_da_empresa                -> contacto_empresa (telefone geral)
+//   pessoa_de_contacto_-_cargo         -> pessoa_contacto_cargo
+//   morada                             -> morada
+//   nif                                -> nif
+//   pessoa_de_contacto_-_nome          -> pessoa_contacto_nome
+// There is no "fax", "código postal" or "localidade" field anywhere in the
+// migrated data (searched wp_postmeta exhaustively) — the classic paper
+// "Ficha Detalhada do Cliente" report had those columns, but this system
+// never tracked them, so the client report leaves them out rather than
+// fabricate empty placeholders for data that was never collected.
+const CLIENT_META_SUBQUERY = `(
+  SELECT
+    post_id,
+    MAX(CASE WHEN meta_key = 'comercial' THEN meta_value END) AS comercial_id,
+    MAX(CASE WHEN meta_key = 'pessoa_de_contacto_-_telefone_email' THEN meta_value END) AS pessoa_contacto_telefone_email,
+    MAX(CASE WHEN meta_key = 'contacto_da_empresa' THEN meta_value END) AS contacto_empresa,
+    MAX(CASE WHEN meta_key = 'pessoa_de_contacto_-_cargo' THEN meta_value END) AS pessoa_contacto_cargo,
+    MAX(CASE WHEN meta_key = 'morada' THEN meta_value END) AS morada,
+    MAX(CASE WHEN meta_key = 'nif' THEN meta_value END) AS nif,
+    MAX(CASE WHEN meta_key = 'pessoa_de_contacto_-_nome' THEN meta_value END) AS pessoa_contacto_nome
+  FROM wp_postmeta
+  WHERE meta_key IN (
+    'comercial', 'pessoa_de_contacto_-_telefone_email', 'contacto_da_empresa',
+    'pessoa_de_contacto_-_cargo', 'morada', 'nif', 'pessoa_de_contacto_-_nome'
+  )
+  GROUP BY post_id
+) pmc`;
+
+const CLIENT_META_SELECT = `
+     COALESCE(NULLIF(c.comercial_id, ''), pmc.comercial_id) AS comercial_id,
+     COALESCE(NULLIF(c.pessoa_contacto_telefone_email, ''), pmc.pessoa_contacto_telefone_email) AS pessoa_contacto_telefone_email,
+     COALESCE(NULLIF(c.contacto_empresa, ''), pmc.contacto_empresa) AS contacto_empresa,
+     COALESCE(NULLIF(c.pessoa_contacto_cargo, ''), pmc.pessoa_contacto_cargo) AS pessoa_contacto_cargo,
+     COALESCE(NULLIF(c.morada, ''), pmc.morada) AS morada,
+     COALESCE(NULLIF(c.nif, ''), pmc.nif) AS nif,
+     COALESCE(NULLIF(c.pessoa_contacto_nome, ''), pmc.pessoa_contacto_nome) AS pessoa_contacto_nome`;
+
 app.get('/api/clientes', (req, res) => {
   console.log('👥 Clientes pedidos - TENTANDO TABELA clients...');
   
@@ -925,9 +970,14 @@ app.get('/api/clientes', (req, res) => {
            NULLIF(TRIM(u.nome_mostrado), ''),
            NULLIF(TRIM(CONCAT(IFNULL(u.nome, ''), ' ', IFNULL(u.apelido, ''))), ''),
            NULLIF(TRIM(u.name), '')
-         ) AS autor_nome
+         ) AS autor_nome,${CLIENT_META_SELECT}
        FROM clients c
-       LEFT JOIN users u ON u.id = COALESCE(c.comercial_id, CAST(NULLIF(c.author, '') AS UNSIGNED))
+       LEFT JOIN ${CLIENT_META_SUBQUERY} ON pmc.post_id = c.legacy_id
+       LEFT JOIN users u ON u.id = COALESCE(
+         CAST(NULLIF(c.comercial_id, '') AS UNSIGNED),
+         CAST(NULLIF(pmc.comercial_id, '') AS UNSIGNED),
+         CAST(NULLIF(c.author, '') AS UNSIGNED)
+       )
        ORDER BY COALESCE(c.publicado_em, c.created_at, c.updated_at) DESC, c.legacy_id DESC`,
       (err2, results) => {
         if (err2) {
@@ -950,11 +1000,18 @@ app.get('/api/clientes/:id', (req, res) => {
     return res.status(400).json({ error: 'ID de cliente inválido' });
   }
 
-  db.query('SELECT * FROM clients WHERE id = ? OR legacy_id = ? LIMIT 1', [id, id], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!rows.length) return res.status(404).json({ error: 'Cliente não encontrado' });
-    return res.json(rows[0]);
-  });
+  db.query(
+    `SELECT c.*,${CLIENT_META_SELECT}
+     FROM clients c
+     LEFT JOIN ${CLIENT_META_SUBQUERY} ON pmc.post_id = c.legacy_id
+     WHERE c.id = ? OR c.legacy_id = ? LIMIT 1`,
+    [id, id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!rows.length) return res.status(404).json({ error: 'Cliente não encontrado' });
+      return res.json(rows[0]);
+    }
+  );
 });
 
 // GET /api/comerciais - listar comerciais para selects

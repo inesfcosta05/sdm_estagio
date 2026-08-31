@@ -10,6 +10,13 @@ import ExcelJS from 'exceljs';
 import DOMPurify from 'dompurify';
 import '../api';
 
+// Paleta partilhada pelas exportações Excel com cores (Gestores, Clientes).
+const XLSX_HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5E8C' } };
+const XLSX_HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } };
+const XLSX_SECTION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
+const XLSX_STRIPE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
+const XLSX_THIN_BORDER = { style: 'thin', color: { argb: 'FFD0D7E2' } };
+
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
 
 const toDateOnly = (value) => {
@@ -194,6 +201,20 @@ const TIPO_CONTACTO_OUTRO = 'Outro/Não especificado';
 // getTipoCliente no componente), sempre um destes três valores.
 const TIPOS_CLIENTE = ['Não Cliente', 'Cliente', 'Novo Cliente'];
 
+// Ficha do Cliente — "Orçamentos e Estado Comercial": os 3 estados do
+// modelo clássico não existem como valores literais nos dados; são
+// derivados dos 5 valores reais confirmados em estado_da_proposta.
+// "Escolha uma opção" (placeholder do dropdown, nunca escolhido de facto)
+// fica de fora das 3 secções.
+const ESTADO_PROPOSTA_BUCKET = {
+  'Adjudicada': 'Aprovados',
+  'Enviada': 'Em Análise',
+  'A Orçamentar': 'Em Análise',
+  'Não Adjudicada': 'Rejeitados',
+  'Desinteresse': 'Rejeitados'
+};
+const ORCAMENTO_BUCKETS = ['Em Análise', 'Aprovados', 'Rejeitados'];
+
 // Métricas do resumo (global e por gestor) — mesma função usada nos dois
 // sítios para garantir que os números batem certo entre si.
 const buildResumoMetrics = (items) => {
@@ -265,6 +286,10 @@ export default function Relatorios({ user = null }) {
 
   const [pesquisaPropostas, setPesquisaPropostas] = useState('');
   const [pesquisaAdjudicadas, setPesquisaAdjudicadas] = useState('');
+
+  const [clienteFicha, setClienteFicha] = useState('Todos');
+  const [submittedClienteFicha, setSubmittedClienteFicha] = useState('Todos');
+  const [showClienteFicha, setShowClienteFicha] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -805,6 +830,73 @@ export default function Relatorios({ user = null }) {
     [gestorClientesFiltrados]
   );
 
+  // "Ficha Detalhada do Cliente" — mesma estrutura do modelo clássico em
+  // papel: cabeçalho do cliente, histórico de contactos (fichas ligadas a
+  // este cliente) e orçamentos agrupados por estado comercial.
+  const clienteFichaSelecionada = useMemo(() => {
+    if (submittedClienteFicha === 'Todos') return null;
+
+    const clienteInfo = clientes.find((c) => {
+      const nome = (c.denominacao_fiscal || c.nome || c.client_name || '').toString().trim();
+      return nome === submittedClienteFicha;
+    }) || null;
+
+    const fichasDoCliente = visibleFichas.filter((ficha) => getClienteNome(ficha) === submittedClienteFicha);
+
+    const historico = fichasDoCliente
+      .map((ficha) => ({
+        fichaId: getFichaId(ficha),
+        data: toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at),
+        gestorNome: getGestor(ficha),
+        tipoContacto: asText(ficha.tipo_contacto) || TIPO_CONTACTO_OUTRO,
+        novoContacto: toBool(ficha.novo_contacto),
+        contactoEfetuado: toBool(ficha.contacto_efetuado),
+        followUp: toBool(ficha.follow_up),
+        motivoResumo: asText(ficha.motivo_resumo_contacto) || '—'
+      }))
+      .filter((item) => item.data)
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    const orcamentos = { 'Em Análise': [], Aprovados: [], Rejeitados: [] };
+    fichasDoCliente.forEach((ficha) => {
+      const meta = getPropostaMeta(ficha);
+      const bucket = meta && !isEstadoPlaceholder(meta.estado) ? ESTADO_PROPOSTA_BUCKET[meta.estado] : null;
+      if (!bucket) return;
+      orcamentos[bucket].push({
+        numero: getFichaId(ficha),
+        descricao: cleanReportText(stripHtml(meta.descritivo)) || (meta.servicos || []).map((s) => s.servico).filter(Boolean).join(', ') || '—',
+        valor: parseMoeda(meta.valorTotal)
+      });
+    });
+    ORCAMENTO_BUCKETS.forEach((bucket) => orcamentos[bucket].sort((a, b) => a.numero - b.numero));
+
+    const valorAprovados = orcamentos.Aprovados.reduce((sum, o) => sum + (o.valor || 0), 0);
+    const valorTotalOrcamentos = ORCAMENTO_BUCKETS.reduce(
+      (sum, bucket) => sum + orcamentos[bucket].reduce((s, o) => s + (o.valor || 0), 0),
+      0
+    );
+
+    return {
+      nome: submittedClienteFicha,
+      gestorNome: clienteInfo ? (clienteInfo.autor_nome || getGestor(clienteInfo)) : (historico[0]?.gestorNome || '—'),
+      morada: asText(clienteInfo?.morada) || '—',
+      nif: asText(clienteInfo?.nif) || '—',
+      pessoaContacto: asText(clienteInfo?.pessoa_contacto_nome) || '—',
+      cargo: asText(clienteInfo?.pessoa_contacto_cargo) || '—',
+      telefone: asText(clienteInfo?.contacto_empresa) || '—',
+      contactoPessoa: asText(clienteInfo?.pessoa_contacto_telefone_email) || '—',
+      historico,
+      orcamentos,
+      totais: {
+        contactos: historico.length,
+        orcamentos: ORCAMENTO_BUCKETS.reduce((sum, bucket) => sum + orcamentos[bucket].length, 0),
+        valorAprovados,
+        valorTotalOrcamentos
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getClienteNome/getFichaId/getGestor/getPropostaMeta/isEstadoPlaceholder are plain closures over clientes/propostasMeta, already covered by these deps
+  }, [submittedClienteFicha, clientes, visibleFichas, propostasMeta]);
+
   const exportGestorClientesToExcel = async () => {
     if (gestorClientesFiltrados.length === 0) return;
     const workbook = new ExcelJS.Workbook();
@@ -831,12 +923,6 @@ export default function Relatorios({ user = null }) {
       return candidate;
     };
 
-    const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2F5E8C' } };
-    const HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } };
-    const SECTION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
-    const STRIPE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
-    const THIN_BORDER = { style: 'thin', color: { argb: 'FFD0D7E2' } };
-
     const addTitleRow = (sheet, text) => {
       const row = sheet.addRow([text]);
       row.font = { bold: true, size: 14 };
@@ -844,7 +930,7 @@ export default function Relatorios({ user = null }) {
     const addSectionRow = (sheet, text) => {
       const row = sheet.addRow([text]);
       row.font = { bold: true };
-      row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = SECTION_FILL; });
+      row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = XLSX_SECTION_FILL; });
     };
     const addMetricRow = (sheet, label, value) => {
       const row = sheet.addRow([label, value]);
@@ -898,9 +984,9 @@ export default function Relatorios({ user = null }) {
 
       const headerRow = sheet.addRow(DETAIL_HEADERS);
       headerRow.eachCell({ includeEmpty: true }, (cell) => {
-        cell.fill = HEADER_FILL;
-        cell.font = HEADER_FONT;
-        cell.border = { bottom: THIN_BORDER };
+        cell.fill = XLSX_HEADER_FILL;
+        cell.font = XLSX_HEADER_FONT;
+        cell.border = { bottom: XLSX_THIN_BORDER };
       });
 
       let rowIndex = 0;
@@ -922,7 +1008,7 @@ export default function Relatorios({ user = null }) {
           ]);
           row.alignment = { vertical: 'top', wrapText: true };
           if (rowIndex % 2 === 0) {
-            row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = STRIPE_FILL; });
+            row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = XLSX_STRIPE_FILL; });
           }
         });
       });
@@ -941,6 +1027,93 @@ export default function Relatorios({ user = null }) {
     const link = document.createElement('a');
     link.href = url;
     link.download = `relatorio_gestor_cliente${suffix}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Exporta a "Ficha Detalhada" do cliente selecionado — mesma estrutura do
+  // modelo clássico em papel: cabeçalho, histórico de contactos e
+  // orçamentos por estado comercial, numa única folha.
+  const exportClienteFichaToExcel = async () => {
+    if (!clienteFichaSelecionada) return;
+    const ficha = clienteFichaSelecionada;
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(ficha.nome.replace(/[\\/?*:[\]]/g, ' ').slice(0, 31) || 'Cliente');
+    sheet.columns = [{ width: 14 }, { width: 46 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 46 }];
+
+    const titleRow = sheet.addRow(['Ficha Detalhada do Cliente']);
+    titleRow.font = { bold: true, size: 14 };
+    sheet.addRow([]);
+
+    const sectionRow = (text) => {
+      const row = sheet.addRow([text]);
+      row.font = { bold: true };
+      row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = XLSX_SECTION_FILL; });
+    };
+
+    sectionRow(ficha.nome);
+    sheet.addRow(['Gestor de Conta', ficha.gestorNome]);
+    sheet.addRow(['Morada', ficha.morada]);
+    sheet.addRow(['NIF', ficha.nif]);
+    sheet.addRow(['Pessoa de Contacto', `${ficha.pessoaContacto}${ficha.cargo !== '—' ? ` (${ficha.cargo})` : ''}`]);
+    sheet.addRow(['Telefone', ficha.telefone]);
+    sheet.addRow(['Contacto (Tel./Email)', ficha.contactoPessoa]);
+    sheet.addRow([]);
+
+    sectionRow('Resumo');
+    sheet.addRow(['Total de Contactos', ficha.totais.contactos]);
+    sheet.addRow(['Total de Orçamentos', ficha.totais.orcamentos]);
+    sheet.addRow(['Valor Aprovado', ficha.totais.valorAprovados]);
+    sheet.addRow(['Valor Total (todos os estados)', ficha.totais.valorTotalOrcamentos]);
+    sheet.addRow([]);
+
+    sectionRow('Histórico de Contactos');
+    const histHeaderRow = sheet.addRow(['Data', 'Descrição', 'Gestor', 'Tipo', 'Novo?', 'Efetuado?']);
+    histHeaderRow.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = XLSX_HEADER_FILL;
+      cell.font = XLSX_HEADER_FONT;
+      cell.border = { bottom: XLSX_THIN_BORDER };
+    });
+    ficha.historico.forEach((item, idx) => {
+      const row = sheet.addRow([
+        toDatePt(item.data),
+        item.motivoResumo,
+        item.gestorNome,
+        item.tipoContacto,
+        item.novoContacto ? 'Sim' : 'Não',
+        item.contactoEfetuado ? 'Sim' : 'Não'
+      ]);
+      row.alignment = { vertical: 'top', wrapText: true };
+      if (idx % 2 === 1) row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = XLSX_STRIPE_FILL; });
+    });
+    if (ficha.historico.length === 0) sheet.addRow(['Sem contactos registados.']);
+    sheet.addRow([]);
+
+    ORCAMENTO_BUCKETS.forEach((bucket) => {
+      sectionRow(`Orçamentos ${bucket} (${ficha.orcamentos[bucket].length})`);
+      const bucketHeaderRow = sheet.addRow(['Nº', 'Descrição', '', 'Valor']);
+      bucketHeaderRow.eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill = XLSX_HEADER_FILL;
+        cell.font = XLSX_HEADER_FONT;
+        cell.border = { bottom: XLSX_THIN_BORDER };
+      });
+      ficha.orcamentos[bucket].forEach((o, idx) => {
+        const row = sheet.addRow([o.numero, o.descricao, '', o.valor]);
+        row.alignment = { vertical: 'top', wrapText: true };
+        if (idx % 2 === 1) row.eachCell({ includeEmpty: true }, (cell) => { cell.fill = XLSX_STRIPE_FILL; });
+      });
+      if (ficha.orcamentos[bucket].length === 0) sheet.addRow(['Sem registos.']);
+      sheet.addRow([]);
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ficha_cliente_${ficha.nome.replace(/[^a-z0-9_-]+/gi, '_')}.xlsx`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1426,7 +1599,43 @@ export default function Relatorios({ user = null }) {
       )}
 
       {tipo === 'clientes' && (
-        <p>Conteúdo em preparação.</p>
+        <>
+          <div style={rowStyle}>
+            <label style={labelStyle}>Cliente</label>
+            <select value={clienteFicha} onChange={(e) => setClienteFicha(e.target.value)} style={selectStyle}>
+              {clienteOptions.map((c) => <option key={c}>{c}</option>)}
+            </select>
+            <button
+              type="button"
+              style={actionBtn}
+              onClick={() => {
+                setSubmittedClienteFicha(clienteFicha);
+                setShowClienteFicha(true);
+              }}
+            >
+              Ver Ficha
+            </button>
+            <button
+              type="button"
+              style={exportBtn}
+              onClick={exportClienteFichaToExcel}
+              disabled={!clienteFichaSelecionada}
+            >
+              Exportar para Excel
+            </button>
+          </div>
+
+          {showClienteFicha && (
+            <div style={{ marginTop: 18 }}>
+              <h3 style={reportHeading}>Ficha Detalhada do Cliente</h3>
+              {!clienteFichaSelecionada ? (
+                <p>Seleciona um cliente e carrega em "Ver Ficha".</p>
+              ) : (
+                <ClienteFichaDetalhada ficha={clienteFichaSelecionada} onOpenFicha={(id) => navigate(`/fichas/${id}/editar`)} />
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1509,6 +1718,109 @@ function DescritivoExpandivel({ html }) {
       {open && (
         <div style={descritivoBoxStyle} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
       )}
+    </div>
+  );
+}
+
+// Aba "Clientes" — "Ficha Detalhada do Cliente", no mesmo espírito do
+// modelo clássico em papel: cabeçalho do cliente, histórico de contactos e
+// orçamentos por estado comercial, com os totais em destaque.
+function ClienteFichaDetalhada({ ficha, onOpenFicha }) {
+  return (
+    <div>
+      <div style={summaryBoxStyle}>
+        <div style={summaryTitleStyle}>{ficha.nome}</div>
+        <div style={clienteHeaderGridStyle}>
+          <div><span style={summaryMetricLabelStyle}>Gestor de Conta</span><div>{ficha.gestorNome}</div></div>
+          <div><span style={summaryMetricLabelStyle}>Morada</span><div>{ficha.morada}</div></div>
+          <div><span style={summaryMetricLabelStyle}>NIF</span><div>{ficha.nif}</div></div>
+          <div><span style={summaryMetricLabelStyle}>Pessoa de Contacto</span><div>{ficha.pessoaContacto}{ficha.cargo !== '—' ? ` (${ficha.cargo})` : ''}</div></div>
+          <div><span style={summaryMetricLabelStyle}>Telefone</span><div>{ficha.telefone}</div></div>
+          <div><span style={summaryMetricLabelStyle}>Contacto (Tel./Email)</span><div>{ficha.contactoPessoa}</div></div>
+        </div>
+      </div>
+
+      <div style={resumoHeroGridStyle}>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{ficha.totais.contactos}</span>
+          <span style={resumoHeroLabelStyle}>Total de Contactos</span>
+        </div>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{ficha.totais.orcamentos}</span>
+          <span style={resumoHeroLabelStyle}>Total de Orçamentos</span>
+        </div>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{formatMoeda(ficha.totais.valorAprovados)}</span>
+          <span style={resumoHeroLabelStyle}>Valor Aprovado</span>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div style={subHeadingStyle}>Histórico de Contactos</div>
+        {ficha.historico.length === 0 ? (
+          <p>Sem contactos registados para este cliente.</p>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={servicosTableStyle}>
+              <thead>
+                <tr>
+                  <th style={servicosThStyle}>Data</th>
+                  <th style={servicosThStyle}>Gestor</th>
+                  <th style={servicosThStyle}>Tipo</th>
+                  <th style={servicosThStyle}>Novo?</th>
+                  <th style={servicosThStyle}>Efetuado?</th>
+                  <th style={servicosThStyle}>Descrição</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ficha.historico.map((item) => (
+                  <tr key={`hist-${item.fichaId}-${item.data}`}>
+                    <td style={servicosTdStyle}>{toDatePt(item.data)}</td>
+                    <td style={servicosTdStyle}>{item.gestorNome}</td>
+                    <td style={servicosTdStyle}>{item.tipoContacto}{item.followUp ? ' · Follow Up' : ''}</td>
+                    <td style={servicosTdStyle}>{item.novoContacto ? 'Sim' : 'Não'}</td>
+                    <td style={servicosTdStyle}>{item.contactoEfetuado ? 'Sim' : 'Não'}</td>
+                    <td style={servicosTdStyle}>
+                      <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(item.fichaId)} title="Editar ficha">
+                        {item.motivoResumo}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div style={subHeadingStyle}>Orçamentos e Estado Comercial</div>
+        <div style={miniTableWrapStyle}>
+          {ORCAMENTO_BUCKETS.map((bucket) => (
+            <div key={bucket} style={miniTableBoxStyle}>
+              <div style={miniTableTitleStyle}>{bucket} ({ficha.orcamentos[bucket].length})</div>
+              {ficha.orcamentos[bucket].length === 0 ? (
+                <div style={miniTableLabelCellStyle}>Sem registos</div>
+              ) : (
+                <table style={miniTableStyle}>
+                  <tbody>
+                    {ficha.orcamentos[bucket].map((o) => (
+                      <tr key={`orc-${bucket}-${o.numero}`}>
+                        <td style={miniTableLabelCellStyle}>
+                          <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(o.numero)} title="Editar ficha">
+                            Nº {o.numero} — {o.descricao}
+                          </button>
+                        </td>
+                        <td style={miniTableValueCellStyle}>{formatMoeda(o.valor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1687,6 +1999,9 @@ const resumoHeroGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto
 const resumoHeroCardStyle = { background: '#fff', border: '1px solid #dce3ea', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 };
 const resumoHeroValueStyle = { fontSize: '1.9rem', fontWeight: 700, color: '#1d2327', lineHeight: 1 };
 const resumoHeroLabelStyle = { fontSize: '0.8rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.03em' };
+
+// Cabeçalho da "Ficha Detalhada do Cliente"
+const clienteHeaderGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px 20px', marginTop: 10, fontSize: '0.92rem' };
 
 // Mini-tabelas "Por Tipo de Contacto" / "Por Tipo de Cliente"
 const miniTableWrapStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, marginTop: 12 };
