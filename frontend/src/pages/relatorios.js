@@ -69,6 +69,15 @@ const cleanReportText = (value) => {
   return raw;
 };
 
+// Plain-text version of a descritivo's HTML, for Excel cells (which can't
+// render markup) — strips tags and collapses whitespace/line breaks.
+const stripHtml = (html) => (html || '')
+  .toString()
+  .replace(/<[^>]*>/g, ' ')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
 const toBool = (value) => {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value === 1;
@@ -195,7 +204,7 @@ export default function Relatorios({ user = null }) {
   const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', dataInicio: '', dataFim: '' });
   const [showContactos, setShowContactos] = useState(false);
   const [expandedMesesPropostas, setExpandedMesesPropostas] = useState({});
-  const [expandedClientesAdjudicadas, setExpandedClientesAdjudicadas] = useState({});
+  const [expandedMesesAdjudicadas, setExpandedMesesAdjudicadas] = useState({});
   const [expandedDatasContactos, setExpandedDatasContactos] = useState({});
   const [showGestorClientes, setShowGestorClientes] = useState(false);
   const [expandedGestoresClientes, setExpandedGestoresClientes] = useState({});
@@ -495,7 +504,10 @@ export default function Relatorios({ user = null }) {
   // preenchido na parte de serviços propostos (ver hasPropostaReal acima),
   // agrupadas por mês/ano de apresentação da proposta.
   const propostasReaisFiltradas = (() => {
-    const base = visibleFichas.filter((ficha) => hasPropostaReal(ficha));
+    // "Propostas" e "Propostas Adjudicadas" são mutuamente exclusivas — uma
+    // ficha com proposta que já foi adjudicada passa a contar só na aba de
+    // adjudicadas, para não aparecer nas duas em simultâneo.
+    const base = visibleFichas.filter((ficha) => hasPropostaReal(ficha) && !isAdjudicadaReal(ficha));
     const byCliente = submittedClienteProp === 'Todos'
       ? base
       : base.filter((ficha) => getClienteNome(ficha) === submittedClienteProp);
@@ -522,8 +534,8 @@ export default function Relatorios({ user = null }) {
 
   // Aba "Propostas Adjudicadas" (Contacto Financeiro): só fichas com um
   // valor real preenchido em serviços adjudicados/faturação (ver
-  // isAdjudicadaReal acima), agrupadas por cliente com subtotal por cliente
-  // e um total geral consolidado no topo.
+  // isAdjudicadaReal acima), agrupadas por mês/ano — mesma lógica de
+  // agrupamento temporal usada em "Propostas" e "Contactos a Efetuar".
   const adjudicadasReaisFiltradas = (() => {
     const base = visibleFichas.filter((ficha) => isAdjudicadaReal(ficha));
     const byCliente = submittedClienteAdj === 'Todos'
@@ -544,29 +556,21 @@ export default function Relatorios({ user = null }) {
     });
   })();
 
-  const adjudicadasAgrupadasPorCliente = useMemo(() => {
-    const groups = new Map();
-    adjudicadasReaisFiltradas.forEach((ficha) => {
-      const clienteNome = getClienteNome(ficha);
-      if (!groups.has(clienteNome)) groups.set(clienteNome, []);
-      groups.get(clienteNome).push(ficha);
-    });
+  // Sem uma "data de adjudicação" própria nos dados, a data da fatura é o
+  // sinal temporal mais próximo disso; sem fatura ainda emitida, cai de
+  // volta na data de apresentação da proposta original.
+  const getAdjudicadaDataGrupo = (ficha) => getAdjudicadaMeta(ficha)?.dataFatura || getPropostaMeta(ficha)?.dataApresentacao;
 
-    return [...groups.entries()]
-      .sort(([a], [b]) => a.localeCompare(b, 'pt'))
-      .map(([clienteNome, items]) => {
-        const subtotal = items.reduce((sum, ficha) => {
-          const valor = parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal);
-          return sum + (valor || 0);
-        }, 0);
-        return { clienteNome, items, subtotal };
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- getAdjudicadaMeta/getClienteNome are plain closures over propostasMeta/clientes, already covered by these deps
-  }, [adjudicadasReaisFiltradas, propostasMeta]);
+  const adjudicadasAgrupadasPorMes = useMemo(
+    () => groupItemsByMonth(adjudicadasReaisFiltradas, getAdjudicadaDataGrupo),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getAdjudicadaDataGrupo is a plain closure over propostasMeta, already listed
+    [adjudicadasReaisFiltradas, propostasMeta]
+  );
 
   const totalConsolidadoAdjudicadas = useMemo(
-    () => adjudicadasAgrupadasPorCliente.reduce((sum, grupo) => sum + grupo.subtotal, 0),
-    [adjudicadasAgrupadasPorCliente]
+    () => adjudicadasReaisFiltradas.reduce((sum, ficha) => sum + (parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal) || 0), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getAdjudicadaMeta is a plain closure over propostasMeta, already listed
+    [adjudicadasReaisFiltradas, propostasMeta]
   );
 
   const contactosFiltrados = (() => {
@@ -804,6 +808,115 @@ export default function Relatorios({ user = null }) {
     XLSX.writeFile(workbook, `relatorio_gestor_cliente${suffix}.xlsx`);
   };
 
+  const exportPropostasToExcel = () => {
+    if (propostasAgrupadasPorMes.length === 0) return;
+    const workbook = XLSX.utils.book_new();
+
+    const totalValor = propostasReaisFiltradas.reduce((sum, ficha) => sum + (parseMoeda(getPropostaMeta(ficha)?.valorTotal) || 0), 0);
+
+    const resumoAoa = [
+      ['Propostas'],
+      [],
+      ['Resumo Geral'],
+      ['Nº de propostas', propostasReaisFiltradas.length],
+      ['Valor total somado', totalValor],
+      [],
+      ['Por mês', 'Nº de propostas', 'Valor total']
+    ];
+    propostasAgrupadasPorMes.forEach((grupo) => {
+      const subtotal = grupo.items.reduce((sum, ficha) => sum + (parseMoeda(getPropostaMeta(ficha)?.valorTotal) || 0), 0);
+      resumoAoa.push([grupo.monthLabel, grupo.items.length, subtotal]);
+    });
+
+    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoAoa);
+    resumoSheet['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo Geral');
+
+    const detalheAoa = [[
+      'Mês', 'Cliente', 'Gestor', 'Data de Apresentação', 'Estado', 'Serviços Propostos', 'Valor Total', 'Descritivo'
+    ]];
+    propostasAgrupadasPorMes.forEach((grupo) => {
+      grupo.items.forEach((ficha) => {
+        const meta = getPropostaMeta(ficha) || {};
+        detalheAoa.push([
+          grupo.monthLabel,
+          getClienteNome(ficha),
+          getGestor(ficha),
+          meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : '—',
+          isEstadoPlaceholder(meta.estado) ? '—' : (meta.estado || '—'),
+          (meta.servicos || []).map((s) => `${s.servico || '—'}: ${s.valor || '—'}`).join('; ') || '—',
+          parseMoeda(meta.valorTotal) ?? '—',
+          stripHtml(meta.descritivo)
+        ]);
+      });
+    });
+
+    const detalheSheet = XLSX.utils.aoa_to_sheet(detalheAoa);
+    detalheSheet['!cols'] = [
+      { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 50 }, { wch: 14 }, { wch: 60 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, detalheSheet, 'Detalhe');
+
+    const suffix = submittedClienteProp !== 'Todos' ? `_${submittedClienteProp.replace(/[^a-z0-9_-]+/gi, '_')}` : '';
+    XLSX.writeFile(workbook, `relatorio_propostas${suffix}.xlsx`);
+  };
+
+  const exportAdjudicadasToExcel = () => {
+    if (adjudicadasAgrupadasPorMes.length === 0) return;
+    const workbook = XLSX.utils.book_new();
+
+    const resumoAoa = [
+      ['Propostas Adjudicadas'],
+      [],
+      ['Resumo Geral'],
+      ['Nº de propostas adjudicadas', adjudicadasReaisFiltradas.length],
+      ['Valor total consolidado', totalConsolidadoAdjudicadas],
+      [],
+      ['Por mês', 'Nº de propostas', 'Valor total']
+    ];
+    adjudicadasAgrupadasPorMes.forEach((grupo) => {
+      const subtotal = grupo.items.reduce((sum, ficha) => sum + (parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal) || 0), 0);
+      resumoAoa.push([grupo.monthLabel, grupo.items.length, subtotal]);
+    });
+
+    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoAoa);
+    resumoSheet['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo Geral');
+
+    const detalheAoa = [[
+      'Mês', 'Cliente', 'Gestor', 'Serviços Adjudicados', 'Valor Total',
+      'Descritivo da Fatura', 'Valor da Fatura', 'Data da Fatura',
+      'Data Prevista de Recebimento', 'Data Último Contacto Financeiro'
+    ]];
+    adjudicadasAgrupadasPorMes.forEach((grupo) => {
+      grupo.items.forEach((ficha) => {
+        const meta = getAdjudicadaMeta(ficha) || {};
+        detalheAoa.push([
+          grupo.monthLabel,
+          getClienteNome(ficha),
+          getGestor(ficha),
+          (meta.servicos || []).map((s) => `${s.servico || '—'}: ${s.valor || '—'}`).join('; ') || '—',
+          parseMoeda(meta.valorTotal) ?? '—',
+          stripHtml(meta.descritivoFatura),
+          meta.valorFatura || '—',
+          meta.dataFatura ? toDatePt(meta.dataFatura) : '—',
+          meta.dataPrevistaRecebimento ? toDatePt(meta.dataPrevistaRecebimento) : '—',
+          meta.dataUltimoContactoFinanceiro ? toDatePt(meta.dataUltimoContactoFinanceiro) : '—'
+        ]);
+      });
+    });
+
+    const detalheSheet = XLSX.utils.aoa_to_sheet(detalheAoa);
+    detalheSheet['!cols'] = [
+      { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 40 }, { wch: 14 },
+      { wch: 40 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 20 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, detalheSheet, 'Detalhe');
+
+    const suffix = submittedClienteAdj !== 'Todos' ? `_${submittedClienteAdj.replace(/[^a-z0-9_-]+/gi, '_')}` : '';
+    XLSX.writeFile(workbook, `relatorio_propostas_adjudicadas${suffix}.xlsx`);
+  };
+
   const titles = {
     'propostas-adjudicadas': 'Propostas Adjudicadas',
     propostas: 'Propostas',
@@ -832,7 +945,7 @@ export default function Relatorios({ user = null }) {
               style={actionBtn}
               onClick={() => {
                 setSubmittedClienteAdj(clienteAdj);
-                setExpandedClientesAdjudicadas({});
+                setExpandedMesesAdjudicadas({});
               }}
             >
               Filtrar
@@ -844,16 +957,24 @@ export default function Relatorios({ user = null }) {
               onChange={(e) => setPesquisaAdjudicadas(e.target.value)}
               style={searchInputStyle}
             />
+            <button
+              type="button"
+              style={exportBtn}
+              onClick={exportAdjudicadasToExcel}
+              disabled={adjudicadasReaisFiltradas.length === 0}
+            >
+              Exportar para Excel
+            </button>
           </div>
 
           <PropostasAdjudicadasFinanceiro
-            grupos={adjudicadasAgrupadasPorCliente}
-            totalConsolidado={totalConsolidadoAdjudicadas}
+            grupos={adjudicadasAgrupadasPorMes}
             totalCount={adjudicadasReaisFiltradas.length}
-            expandedClientes={expandedClientesAdjudicadas}
-            setExpandedClientes={setExpandedClientesAdjudicadas}
+            expandedMeses={expandedMesesAdjudicadas}
+            setExpandedMeses={setExpandedMesesAdjudicadas}
             onOpenFicha={(id) => navigate(`/fichas/${id}/editar`)}
             getFichaId={getFichaId}
+            getClienteNome={getClienteNome}
             getGestor={getGestor}
             getAdjudicadaMeta={getAdjudicadaMeta}
           />
@@ -884,6 +1005,14 @@ export default function Relatorios({ user = null }) {
               onChange={(e) => setPesquisaPropostas(e.target.value)}
               style={searchInputStyle}
             />
+            <button
+              type="button"
+              style={exportBtn}
+              onClick={exportPropostasToExcel}
+              disabled={propostasReaisFiltradas.length === 0}
+            >
+              Exportar para Excel
+            </button>
           </div>
 
           <PropostasComerciais
@@ -1266,8 +1395,8 @@ function PropostasComerciais({
 // com subtotal, um banner de total consolidado no topo, e uma tabela por
 // cliente com os serviços adjudicados e dados de faturação de cada ficha.
 function PropostasAdjudicadasFinanceiro({
-  grupos, totalConsolidado, totalCount, expandedClientes, setExpandedClientes,
-  onOpenFicha, getFichaId, getGestor, getAdjudicadaMeta
+  grupos, totalCount, expandedMeses, setExpandedMeses,
+  onOpenFicha, getFichaId, getClienteNome, getGestor, getAdjudicadaMeta
 }) {
   if (totalCount === 0) {
     return <p style={{ marginTop: 8 }}>Sem propostas adjudicadas com serviços ou faturação preenchidos para os filtros atuais.</p>;
@@ -1275,70 +1404,68 @@ function PropostasAdjudicadasFinanceiro({
 
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={consolidatedBannerStyle}>
-        <span style={summaryTitleStyle}>Total Consolidado</span>
-        <strong style={consolidatedValueStyle}>{formatMoeda(totalConsolidado)}</strong>
-        <span style={summaryMetricLabelStyle}>
-          {totalCount} proposta{totalCount === 1 ? '' : 's'} adjudicada{totalCount === 1 ? '' : 's'} em {grupos.length} cliente{grupos.length === 1 ? '' : 's'}
-        </span>
-      </div>
+      {grupos.map((grupo) => {
+        const subtotal = grupo.items.reduce((sum, ficha) => sum + (parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal) || 0), 0);
+        return (
+          <div key={`adj-mes-${grupo.monthKey}`} style={dateSectionStyle}>
+            <button
+              type="button"
+              style={dateToggleSimpleStyle}
+              onClick={() => setExpandedMeses((prev) => ({ ...prev, [grupo.monthKey]: !(prev[grupo.monthKey] ?? true) }))}
+            >
+              <span style={dateChevronSimpleStyle}>{(expandedMeses[grupo.monthKey] ?? true) ? '▼' : '▶'}</span>
+              <span style={dateHeadingStyle}>{grupo.monthLabel}</span>
+              <span style={dateCountSimpleStyle}>({grupo.items.length}) — {formatMoeda(subtotal)}</span>
+            </button>
 
-      {grupos.map((grupo) => (
-        <div key={`adj-cliente-${grupo.clienteNome}`} style={dateSectionStyle}>
-          <button
-            type="button"
-            style={dateToggleSimpleStyle}
-            onClick={() => setExpandedClientes((prev) => ({ ...prev, [grupo.clienteNome]: !(prev[grupo.clienteNome] ?? true) }))}
-          >
-            <span style={dateChevronSimpleStyle}>{(expandedClientes[grupo.clienteNome] ?? true) ? '▼' : '▶'}</span>
-            <span style={dateHeadingStyle}>{grupo.clienteNome}</span>
-            <span style={dateCountSimpleStyle}>({grupo.items.length}) — {formatMoeda(grupo.subtotal)}</span>
-          </button>
-
-          {(expandedClientes[grupo.clienteNome] ?? true) && (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={adjudicadaTableStyle}>
-                <thead>
-                  <tr>
-                    <th style={servicosThStyle}>Ficha</th>
-                    <th style={servicosThStyle}>Gestor</th>
-                    <th style={servicosThStyle}>Serviços adjudicados</th>
-                    <th style={servicosThStyle}>Valor total</th>
-                    <th style={servicosThStyle}>Faturação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {grupo.items.map((ficha) => {
-                    const meta = getAdjudicadaMeta(ficha) || {};
-                    const fichaId = getFichaId(ficha);
-                    return (
-                      <tr key={`adj-${fichaId}`}>
-                        <td style={servicosTdStyle}>
-                          <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(fichaId)} title="Editar ficha">
-                            Ver ficha
-                          </button>
-                        </td>
-                        <td style={servicosTdStyle}>{getGestor(ficha)}</td>
-                        <td style={servicosTdStyle}>
-                          {meta.servicos && meta.servicos.length > 0
-                            ? meta.servicos.map((servico) => servico.servico).filter(Boolean).join(', ')
-                            : '—'}
-                        </td>
-                        <td style={servicosTdStyle}><strong>{formatMoeda(meta.valorTotal)}</strong></td>
-                        <td style={servicosTdStyle}>
-                          {meta.valorFatura || meta.dataFatura
-                            ? `${formatMoeda(meta.valorFatura)}${meta.dataFatura ? ' em ' + toDatePt(meta.dataFatura) : ''}`
-                            : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      ))}
+            {(expandedMeses[grupo.monthKey] ?? true) && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={adjudicadaTableStyle}>
+                  <thead>
+                    <tr>
+                      <th style={servicosThStyle}>Cliente</th>
+                      <th style={servicosThStyle}>Gestor</th>
+                      <th style={servicosThStyle}>Serviços adjudicados</th>
+                      <th style={servicosThStyle}>Valor total</th>
+                      <th style={servicosThStyle}>Faturação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {grupo.items.map((ficha) => {
+                      const meta = getAdjudicadaMeta(ficha) || {};
+                      const fichaId = getFichaId(ficha);
+                      return (
+                        <tr key={`adj-${fichaId}`}>
+                          <td style={servicosTdStyle}>
+                            <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(fichaId)} title="Editar ficha">
+                              {getClienteNome(ficha)}
+                            </button>
+                          </td>
+                          <td style={servicosTdStyle}>{getGestor(ficha)}</td>
+                          <td style={servicosTdStyle}>
+                            {meta.servicos && meta.servicos.length > 0
+                              ? meta.servicos.map((servico) => servico.servico).filter(Boolean).join(', ')
+                              : '—'}
+                          </td>
+                          <td style={servicosTdStyle}><strong>{formatMoeda(meta.valorTotal)}</strong></td>
+                          <td style={servicosTdStyle}>
+                            {(() => {
+                              const valorFatura = parseMoeda(meta.valorFatura);
+                              if (valorFatura === null && !meta.dataFatura) return '—';
+                              if (valorFatura === null) return `Faturado em ${toDatePt(meta.dataFatura)}`;
+                              return `${formatMoeda(meta.valorFatura)}${meta.dataFatura ? ' em ' + toDatePt(meta.dataFatura) : ''}`;
+                            })()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1403,7 +1530,5 @@ const servicosTableStyle = { width: '100%', borderCollapse: 'collapse', marginTo
 const servicosThStyle = { textAlign: 'left', borderBottom: '1px solid #dce3ea', padding: '4px 6px', color: '#4b5563', fontWeight: 600 };
 const servicosTdStyle = { borderBottom: '1px solid #f0f1f2', padding: '4px 6px' };
 
-// Aba "Propostas Adjudicadas" — banner de total + tabela por cliente
-const consolidatedBannerStyle = { display: 'flex', alignItems: 'baseline', gap: 14, background: '#eef7f0', border: '1px solid #bfe3c5', borderRadius: 8, padding: '12px 16px', marginBottom: 14 };
-const consolidatedValueStyle = { fontSize: '1.6rem', color: '#1e7a34' };
+// Aba "Propostas Adjudicadas" — tabela por mês
 const adjudicadaTableStyle = { width: '100%', borderCollapse: 'collapse', marginTop: 4, fontSize: '0.9rem', minWidth: 640 };
