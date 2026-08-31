@@ -537,7 +537,7 @@ function AppContent() {
         path="/login"
         element={
           isAuthenticated ? (
-            <Navigate to="/" replace />
+            <Navigate to="/*" replace />
           ) : (
             <Login onLogin={handleLogin} language={language} />
           )
