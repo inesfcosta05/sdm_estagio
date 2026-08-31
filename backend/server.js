@@ -1137,7 +1137,9 @@ app.post('/api/clientes', (req, res) => {
     (body.pessoa_contacto_cargo || '').toString().trim(),
     (body.pessoa_contacto_telefone_email || '').toString().trim(),
     (body.morada || '').toString().trim(),
+    (body.localidade || '').toString().trim(),
     (body.nif || '').toString().trim(),
+    (body.observacoes || '').toString().trim(),
     (body.comercial_id || body.comercial || body.autor || '').toString().trim(),
     (body.author || '').toString().trim(),
     estado,
@@ -1155,7 +1157,9 @@ app.post('/api/clientes', (req, res) => {
       pessoa_contacto_cargo,
       pessoa_contacto_telefone_email,
       morada,
+      localidade,
       nif,
+      observacoes,
       comercial_id,
       author,
       estado,
@@ -1164,7 +1168,7 @@ app.post('/api/clientes', (req, res) => {
       publicado_em,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
     values,
     (err, result) => {
       if (err) {
@@ -1194,7 +1198,9 @@ app.put('/api/clientes/:id', (req, res) => {
     pessoa_contacto_cargo,
     pessoa_contacto_telefone_email,
     morada,
+    localidade,
     nif,
+    observacoes,
     author
   } = req.body || {};
 
@@ -1260,9 +1266,19 @@ app.put('/api/clientes/:id', (req, res) => {
     values.push(morada.trim());
   }
 
+  if (typeof localidade === 'string') {
+    updates.push('localidade = ?');
+    values.push(localidade.trim());
+  }
+
   if (typeof nif === 'string') {
     updates.push('nif = ?');
     values.push(nif.trim());
+  }
+
+  if (typeof observacoes === 'string') {
+    updates.push('observacoes = ?');
+    values.push(observacoes.trim());
   }
 
   if (typeof author === 'string') {

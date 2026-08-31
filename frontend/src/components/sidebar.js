@@ -335,14 +335,16 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
               >
                 {labels.gestores}
               </Nav.Link>
-              <Nav.Link
-                as={Link}
-                to="/relatorios?tipo=clientes"
-                onClick={() => setActiveLink('/relatorios?tipo=clientes')}
-                className={`sidebar-sublink ${isActive('/relatorios?tipo=clientes') ? 'active' : ''}`}
-              >
-                {labels.relatoriosClientes}
-              </Nav.Link>
+              {isAdmin && (
+                <Nav.Link
+                  as={Link}
+                  to="/relatorios?tipo=clientes"
+                  onClick={() => setActiveLink('/relatorios?tipo=clientes')}
+                  className={`sidebar-sublink ${isActive('/relatorios?tipo=clientes') ? 'active' : ''}`}
+                >
+                  {labels.relatoriosClientes}
+                </Nav.Link>
+              )}
             </div>
           )}
         </div>
@@ -422,7 +424,9 @@ const Sidebar = ({ onToggle, language = 'default', user = null }) => {
                 <Link to="/relatorios?tipo=propostas" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=propostas'); setFloatingMenu(null); }}>{labels.propostas}</Link>
                 <Link to="/relatorios?tipo=contactos-a-efetuar" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=contactos-a-efetuar'); setFloatingMenu(null); }}>{labels.contactos}</Link>
                 <Link to="/relatorios?tipo=gestores" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=gestores'); setFloatingMenu(null); }}>{labels.gestores}</Link>
-                <Link to="/relatorios?tipo=clientes" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=clientes'); setFloatingMenu(null); }}>{labels.relatoriosClientes}</Link>
+                {isAdmin && (
+                  <Link to="/relatorios?tipo=clientes" className="floating-link" onClick={() => { setActiveLink('/relatorios?tipo=clientes'); setFloatingMenu(null); }}>{labels.relatoriosClientes}</Link>
+                )}
               </>
             )}
           </div>

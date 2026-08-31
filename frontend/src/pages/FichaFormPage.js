@@ -464,7 +464,7 @@ export default function FichaFormPage({ mode = 'create', disableVisualEditor = f
             <textarea value={form.porque_relatorio_errado} onChange={(e) => handleChange('porque_relatorio_errado', e.target.value)} style={{ ...fieldInput, width: '100%', maxWidth: 860, height: 120 }} />
           </FieldRow>
 
-          <FieldRow label="Assunto tratado?">
+          <FieldRow label="Processo encerrado?">
             <label style={checkboxRow}><input type="checkbox" checked={form.assunto_tratado} onChange={(e) => handleChange('assunto_tratado', e.target.checked)} /> Sim</label>
           </FieldRow>
 

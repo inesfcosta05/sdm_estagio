@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import * as XLSX from 'xlsx';
-// Used only for the Gestores export: the free "xlsx" (SheetJS Community
-// Edition) package used elsewhere in this file cannot write cell colors/fills
-// into the output file at all — that's a SheetJS Pro-only feature. ExcelJS is
-// a free, actively maintained library that supports real cell styling.
+// All exports in this file use ExcelJS, not the free "xlsx" (SheetJS
+// Community Edition) package — SheetJS CE can't write cell colors/fills or
+// borders into the output file at all (that's a SheetJS Pro-only feature).
 import ExcelJS from 'exceljs';
 import DOMPurify from 'dompurify';
 import '../api';
@@ -16,6 +14,19 @@ const XLSX_HEADER_FONT = { bold: true, color: { argb: 'FFFFFFFF' } };
 const XLSX_SECTION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } };
 const XLSX_STRIPE_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3F8' } };
 const XLSX_THIN_BORDER = { style: 'thin', color: { argb: 'FFD0D7E2' } };
+
+// Borda fina preta em todas as células com dados, em todos os Excel
+// exportados — pedido explicitamente para facilitar a leitura por parte dos
+// trabalhadores. Aplica-se sempre no fim, depois de todas as linhas de uma
+// folha estarem inseridas, para não ser sobrescrita por outros estilos
+// (fill/font) entretanto aplicados às mesmas células.
+const XLSX_BLACK_BORDER = { style: 'thin', color: { argb: 'FF000000' } };
+const XLSX_ALL_BORDERS = { top: XLSX_BLACK_BORDER, left: XLSX_BLACK_BORDER, bottom: XLSX_BLACK_BORDER, right: XLSX_BLACK_BORDER };
+const applyBordersToSheet = (sheet) => {
+  sheet.eachRow((row) => {
+    row.eachCell((cell) => { cell.border = XLSX_ALL_BORDERS; });
+  });
+};
 
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
 
@@ -225,12 +236,16 @@ const buildResumoMetrics = (items) => {
   const porTipoCliente = {};
   TIPOS_CLIENTE.forEach((tipo) => { porTipoCliente[tipo] = 0; });
 
+  const porLocalidade = {};
+
   const clientesUnicos = new Set();
 
   items.forEach((item) => {
     const tipoContacto = TIPOS_CONTACTO.includes(item.tipoContacto) ? item.tipoContacto : TIPO_CONTACTO_OUTRO;
     porTipoContacto[tipoContacto] += 1;
     porTipoCliente[item.tipoCliente] = (porTipoCliente[item.tipoCliente] || 0) + 1;
+    const localidade = item.localidade || 'Sem localidade';
+    porLocalidade[localidade] = (porLocalidade[localidade] || 0) + 1;
     // "Total de Clientes" conta clientes reais (exclui "Não Cliente", que por
     // definição não corresponde a nenhum cliente) — um cliente com várias
     // fichas só conta uma vez.
@@ -249,7 +264,8 @@ const buildResumoMetrics = (items) => {
     novos: items.filter((item) => item.sinalNovo).length,
     desmarcados: items.filter((item) => item.sinalDesmarcado).length,
     porTipoContacto,
-    porTipoCliente
+    porTipoCliente,
+    porLocalidade
   };
 };
 
@@ -269,13 +285,15 @@ export default function Relatorios({ user = null }) {
   const [dataContactos, setDataContactos] = useState('');
   const [gestor, setGestor] = useState('Todos');
   const [clienteGC, setClienteGC] = useState('Todos');
+  const [tipoContactoGC, setTipoContactoGC] = useState('Todos');
+  const [localidadeGC, setLocalidadeGC] = useState('Todos');
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
 
   const [submittedClienteAdj, setSubmittedClienteAdj] = useState('Todos');
   const [submittedClienteProp, setSubmittedClienteProp] = useState('Todos');
   const [submittedDataContactos, setSubmittedDataContactos] = useState('');
-  const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', dataInicio: '', dataFim: '' });
+  const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', tipoContacto: 'Todos', localidade: 'Todos', dataInicio: '', dataFim: '' });
   const [showContactos, setShowContactos] = useState(false);
   const [showGestorClientes, setShowGestorClientes] = useState(false);
   const [expandedMesesPropostas, setExpandedMesesPropostas] = useState({});
@@ -387,6 +405,12 @@ export default function Relatorios({ user = null }) {
     return mapped?.id || mapped?.legacy_id || null;
   };
 
+  const getClienteLocalidade = (ficha) => {
+    const raw = getClienteRaw(ficha);
+    const mapped = clienteByAnyKey.get(normalizeKey(raw));
+    return asText(mapped?.localidade) || 'Sem localidade';
+  };
+
   // "Tipo de Cliente" não existe como campo em lado nenhum dos dados
   // (confirmado diretamente na BD — não há equivalente no WordPress nem
   // nesta app), por isso é derivado aqui: uma ficha sem cliente resolvido é
@@ -471,7 +495,10 @@ export default function Relatorios({ user = null }) {
   }, [gestorMap, gestorIdMap]);
 
   const normalizedRole = normalizeRole(user?.role);
-  const isCurrentUserPrivileged = normalizedRole === 'editor' || normalizedRole === 'contributor' || normalizedRole === 'admin';
+  // "editor" fica restrito ao seu próprio conteúdo nos relatórios de
+  // Contactos, Gestores, Propostas e Propostas Adjudicadas; "contributor" e
+  // "admin" veem sempre os dados de todos.
+  const isCurrentUserPrivileged = normalizedRole === 'contributor' || normalizedRole === 'admin';
   const allGestorNames = useMemo(() => {
     const fromComerciais = comerciais
       .map((item) => cleanManagerName(item.label || item.display_name || item.username || item.value || ''))
@@ -619,6 +646,18 @@ export default function Relatorios({ user = null }) {
         .sort((a, b) => a.localeCompare(b, 'pt'));
 
     return source.length ? ['Todos', ...source] : ['Todos'];
+  })();
+
+  // Lista fixa (Telefónico/Email/Reunião/Visita), tal como já usada nos
+  // resumos do relatório — garante que o filtro cobre sempre estas 4
+  // opções mesmo que, num dado momento, faltem dados com algum destes tipos.
+  const tipoContactoOptions = ['Todos', ...TIPOS_CONTACTO];
+
+  const localidadeOptions = (() => {
+    const names = [...new Set(
+      clientes.map((cliente) => asText(cliente.localidade)).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, 'pt'));
+    return ['Todos', ...names];
   })();
 
   useEffect(() => {
@@ -775,6 +814,7 @@ export default function Relatorios({ user = null }) {
         clienteNome: getClienteNome(ficha),
         clienteId: getClienteId(ficha),
         tipoCliente: getTipoCliente(ficha, dataContactoStr),
+        localidade: getClienteLocalidade(ficha),
         dataContacto: dataContactoStr,
         dataProximoContacto: toDateOnly(ficha.data_proximo_contacto),
         duracao: getDuracaoLabel(ficha),
@@ -793,7 +833,10 @@ export default function Relatorios({ user = null }) {
     // Filtro 100% flexível: cada campo (gestor, cliente, data início, data
     // fim) é aplicado só se estiver preenchido no momento em que se carrega
     // em "Filtrar" — nenhum depende dos outros para funcionar.
-    const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
+    const {
+      gestor: subGestor, cliente: subCliente, tipoContacto: subTipoContacto,
+      localidade: subLocalidade, dataInicio: subDataInicio, dataFim: subDataFim
+    } = submittedGC;
 
     const filtered = base.filter(item => {
       const normalizedItemGestor = normalizeKey(cleanManagerName(item.gestorNome));
@@ -804,10 +847,18 @@ export default function Relatorios({ user = null }) {
       const normalizedSubCliente = normalizeKey(subCliente || '');
       const byCliente = subCliente === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
 
+      const byTipoContacto = (!subTipoContacto || subTipoContacto === 'Todos')
+        ? true
+        : normalizeKey(item.tipoContacto || '') === normalizeKey(subTipoContacto);
+
+      const byLocalidade = (!subLocalidade || subLocalidade === 'Todos')
+        ? true
+        : normalizeKey(item.localidade || '') === normalizeKey(subLocalidade);
+
       const byDataInicio = !subDataInicio ? true : (item.dataContacto && item.dataContacto >= subDataInicio);
       const byDataFim = !subDataFim ? true : (item.dataContacto && item.dataContacto <= subDataFim);
 
-      return byGestor && byCliente && byDataInicio && byDataFim;
+      return byGestor && byCliente && byTipoContacto && byLocalidade && byDataInicio && byDataFim;
     });
 
     return filtered.sort((a, b) => {
@@ -970,22 +1021,29 @@ export default function Relatorios({ user = null }) {
       sheet.addRow([]);
       addBreakdownRows(sheet, 'Por Tipo de Cliente', resumo.porTipoCliente);
       sheet.addRow([]);
+      addBreakdownRows(sheet, 'Por Localidade', resumo.porLocalidade);
+      sheet.addRow([]);
     };
 
     // --- Resumo Geral ---
     const resumoSheet = workbook.addWorksheet(getUniqueSheetName('Resumo Geral'));
-    resumoSheet.columns = [{ width: 42 }, { width: 16 }];
+    resumoSheet.columns = [{ width: 46 }, { width: 16 }];
     addTitleRow(resumoSheet, 'Gestores');
     resumoSheet.addRow([]);
     addResumoBlock(resumoSheet, resumoGlobalGestorClientes);
+    applyBordersToSheet(resumoSheet);
 
     // --- Uma folha por gestor, com resumo próprio + tabela de detalhe ---
     const DETAIL_HEADERS = [
-      'Data', 'Ficha', 'Cliente', 'Tipo de Cliente', 'Duração', 'Tipo de contacto',
+      'Data', 'Ficha', 'Cliente', 'Tipo de Cliente', 'Localidade', 'Duração', 'Tipo de contacto',
       'Contacto efetuado?', 'Motivo/Resumo do Contacto', 'Motivo/Tipo do Próximo Contacto',
-      'Data do Próximo Contacto', 'Assunto Tratado?'
+      'Data do Próximo Contacto', 'Processo Encerrado?'
     ];
-    const DETAIL_WIDTHS = [14, 42, 32, 14, 12, 16, 16, 46, 34, 18, 14];
+    // Coluna A é partilhada, nesta mesma folha, entre a tabela de detalhe
+    // (datas curtas) e os rótulos do resumo do gestor logo acima (ex: "Nº de
+    // Reforços de Pedidos de Contacto") — tem de ser larga o suficiente para
+    // esses rótulos não ficarem cortados, não apenas para as datas.
+    const DETAIL_WIDTHS = [42, 42, 32, 14, 16, 12, 16, 16, 46, 34, 18, 14];
 
     gestorClientesAgrupadosPorGestor.forEach((gestorGrupo) => {
       const sheet = workbook.addWorksheet(getUniqueSheetName(gestorGrupo.gestorNome));
@@ -1011,6 +1069,7 @@ export default function Relatorios({ user = null }) {
             item.fichaTitulo,
             item.clienteNome,
             item.tipoCliente,
+            item.localidade,
             item.duracao,
             item.tipoContacto,
             item.contactoEfetuado ? 'Sim' : 'Não',
@@ -1025,11 +1084,14 @@ export default function Relatorios({ user = null }) {
           }
         });
       });
+      applyBordersToSheet(sheet);
     });
 
     const parts = [];
     if (submittedGC.gestor !== 'Todos') parts.push(submittedGC.gestor);
     if (submittedGC.cliente !== 'Todos') parts.push(submittedGC.cliente);
+    if (submittedGC.tipoContacto && submittedGC.tipoContacto !== 'Todos') parts.push(submittedGC.tipoContacto);
+    if (submittedGC.localidade && submittedGC.localidade !== 'Todos') parts.push(submittedGC.localidade);
     if (submittedGC.dataInicio) parts.push(`de_${submittedGC.dataInicio}`);
     if (submittedGC.dataFim) parts.push(`ate_${submittedGC.dataFim}`);
     const suffix = parts.length ? `_${parts.join('_').replace(/[^a-z0-9_-]+/gi, '_')}` : '';
@@ -1054,7 +1116,10 @@ export default function Relatorios({ user = null }) {
     const ficha = clienteFichaSelecionada;
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet(ficha.nome.replace(/[\\/?*:[\]]/g, ' ').slice(0, 31) || 'Cliente');
-    sheet.columns = [{ width: 14 }, { width: 46 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 46 }];
+    // Coluna A partilhada entre os rótulos do cabeçalho/resumo (ex: "Contacto
+    // (Tel./Email)") e a coluna "Data"/"Nº" das tabelas mais abaixo — larga
+    // o suficiente para os rótulos não ficarem cortados.
+    sheet.columns = [{ width: 32 }, { width: 46 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 46 }];
 
     const titleRow = sheet.addRow(['Ficha Detalhada do Cliente']);
     titleRow.font = { bold: true, size: 14 };
@@ -1121,6 +1186,8 @@ export default function Relatorios({ user = null }) {
       sheet.addRow([]);
     });
 
+    applyBordersToSheet(sheet);
+
     const buffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
@@ -1133,37 +1200,64 @@ export default function Relatorios({ user = null }) {
     URL.revokeObjectURL(url);
   };
 
-  const exportPropostasToExcel = () => {
+  // Estas duas exportações usavam a biblioteca xlsx (SheetJS Community
+  // Edition), que — tal como não consegue aplicar cores (ver Gestores) —
+  // também não consegue aplicar bordas às células. Passaram para ExcelJS
+  // para poderem ter a borda fina preta pedida em todas as células, tal
+  // como as restantes exportações.
+  const downloadWorkbook = async (workbook, filename) => {
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const styleHeaderRow = (row) => {
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.fill = XLSX_HEADER_FILL;
+      cell.font = XLSX_HEADER_FONT;
+    });
+  };
+
+  const exportPropostasToExcel = async () => {
     if (propostasAgrupadasPorMes.length === 0) return;
-    const workbook = XLSX.utils.book_new();
+    const workbook = new ExcelJS.Workbook();
 
     const totalValor = propostasReaisFiltradas.reduce((sum, ficha) => sum + (parseMoeda(getPropostaMeta(ficha)?.valorTotal) || 0), 0);
 
-    const resumoAoa = [
-      ['Propostas'],
-      [],
-      ['Resumo Geral'],
-      ['Nº de propostas', propostasReaisFiltradas.length],
-      ['Valor total somado', totalValor],
-      [],
-      ['Por mês', 'Nº de propostas', 'Valor total']
-    ];
+    const resumoSheet = workbook.addWorksheet('Resumo Geral');
+    resumoSheet.columns = [{ width: 34 }, { width: 16 }, { width: 16 }];
+    const titleRow = resumoSheet.addRow(['Propostas']);
+    titleRow.font = { bold: true, size: 14 };
+    resumoSheet.addRow([]);
+    resumoSheet.addRow(['Resumo Geral']).font = { bold: true };
+    resumoSheet.addRow(['Nº de propostas', propostasReaisFiltradas.length]);
+    resumoSheet.addRow(['Valor total somado', totalValor]);
+    resumoSheet.addRow([]);
+    styleHeaderRow(resumoSheet.addRow(['Por mês', 'Nº de propostas', 'Valor total']));
     propostasAgrupadasPorMes.forEach((grupo) => {
       const subtotal = grupo.items.reduce((sum, ficha) => sum + (parseMoeda(getPropostaMeta(ficha)?.valorTotal) || 0), 0);
-      resumoAoa.push([grupo.monthLabel, grupo.items.length, subtotal]);
+      resumoSheet.addRow([grupo.monthLabel, grupo.items.length, subtotal]);
     });
+    applyBordersToSheet(resumoSheet);
 
-    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoAoa);
-    resumoSheet['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo Geral');
-
-    const detalheAoa = [[
+    const detalheSheet = workbook.addWorksheet('Detalhe');
+    detalheSheet.columns = [
+      { width: 18 }, { width: 34 }, { width: 16 }, { width: 18 }, { width: 16 }, { width: 50 }, { width: 14 }, { width: 60 }
+    ];
+    styleHeaderRow(detalheSheet.addRow([
       'Mês', 'Cliente', 'Gestor', 'Data de Apresentação', 'Estado', 'Serviços Propostos', 'Valor Total', 'Descritivo'
-    ]];
+    ]));
     propostasAgrupadasPorMes.forEach((grupo) => {
       grupo.items.forEach((ficha) => {
         const meta = getPropostaMeta(ficha) || {};
-        detalheAoa.push([
+        const row = detalheSheet.addRow([
           grupo.monthLabel,
           getClienteNome(ficha),
           getGestor(ficha),
@@ -1173,50 +1267,49 @@ export default function Relatorios({ user = null }) {
           parseMoeda(meta.valorTotal) ?? '—',
           stripHtml(meta.descritivo)
         ]);
+        row.alignment = { vertical: 'top', wrapText: true };
       });
     });
-
-    const detalheSheet = XLSX.utils.aoa_to_sheet(detalheAoa);
-    detalheSheet['!cols'] = [
-      { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 50 }, { wch: 14 }, { wch: 60 }
-    ];
-    XLSX.utils.book_append_sheet(workbook, detalheSheet, 'Detalhe');
+    applyBordersToSheet(detalheSheet);
 
     const suffix = submittedClienteProp !== 'Todos' ? `_${submittedClienteProp.replace(/[^a-z0-9_-]+/gi, '_')}` : '';
-    XLSX.writeFile(workbook, `relatorio_propostas${suffix}.xlsx`);
+    await downloadWorkbook(workbook, `relatorio_propostas${suffix}.xlsx`);
   };
 
-  const exportAdjudicadasToExcel = () => {
+  const exportAdjudicadasToExcel = async () => {
     if (adjudicadasAgrupadasPorMes.length === 0) return;
-    const workbook = XLSX.utils.book_new();
+    const workbook = new ExcelJS.Workbook();
 
-    const resumoAoa = [
-      ['Propostas Adjudicadas'],
-      [],
-      ['Resumo Geral'],
-      ['Nº de propostas adjudicadas', adjudicadasReaisFiltradas.length],
-      ['Valor total consolidado', totalConsolidadoAdjudicadas],
-      [],
-      ['Por mês', 'Nº de propostas', 'Valor total']
-    ];
+    const resumoSheet = workbook.addWorksheet('Resumo Geral');
+    resumoSheet.columns = [{ width: 34 }, { width: 16 }, { width: 16 }];
+    const titleRow = resumoSheet.addRow(['Propostas Adjudicadas']);
+    titleRow.font = { bold: true, size: 14 };
+    resumoSheet.addRow([]);
+    resumoSheet.addRow(['Resumo Geral']).font = { bold: true };
+    resumoSheet.addRow(['Nº de propostas adjudicadas', adjudicadasReaisFiltradas.length]);
+    resumoSheet.addRow(['Valor total consolidado', totalConsolidadoAdjudicadas]);
+    resumoSheet.addRow([]);
+    styleHeaderRow(resumoSheet.addRow(['Por mês', 'Nº de propostas', 'Valor total']));
     adjudicadasAgrupadasPorMes.forEach((grupo) => {
       const subtotal = grupo.items.reduce((sum, ficha) => sum + (parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal) || 0), 0);
-      resumoAoa.push([grupo.monthLabel, grupo.items.length, subtotal]);
+      resumoSheet.addRow([grupo.monthLabel, grupo.items.length, subtotal]);
     });
+    applyBordersToSheet(resumoSheet);
 
-    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoAoa);
-    resumoSheet['!cols'] = [{ wch: 30 }, { wch: 16 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(workbook, resumoSheet, 'Resumo Geral');
-
-    const detalheAoa = [[
+    const detalheSheet = workbook.addWorksheet('Detalhe');
+    detalheSheet.columns = [
+      { width: 18 }, { width: 34 }, { width: 16 }, { width: 40 }, { width: 14 },
+      { width: 40 }, { width: 14 }, { width: 14 }, { width: 18 }, { width: 20 }
+    ];
+    styleHeaderRow(detalheSheet.addRow([
       'Mês', 'Cliente', 'Gestor', 'Serviços Adjudicados', 'Valor Total',
       'Descritivo da Fatura', 'Valor da Fatura', 'Data da Fatura',
       'Data Prevista de Recebimento', 'Data Último Contacto Financeiro'
-    ]];
+    ]));
     adjudicadasAgrupadasPorMes.forEach((grupo) => {
       grupo.items.forEach((ficha) => {
         const meta = getAdjudicadaMeta(ficha) || {};
-        detalheAoa.push([
+        const row = detalheSheet.addRow([
           grupo.monthLabel,
           getClienteNome(ficha),
           getGestor(ficha),
@@ -1228,18 +1321,13 @@ export default function Relatorios({ user = null }) {
           meta.dataPrevistaRecebimento ? toDatePt(meta.dataPrevistaRecebimento) : '—',
           meta.dataUltimoContactoFinanceiro ? toDatePt(meta.dataUltimoContactoFinanceiro) : '—'
         ]);
+        row.alignment = { vertical: 'top', wrapText: true };
       });
     });
-
-    const detalheSheet = XLSX.utils.aoa_to_sheet(detalheAoa);
-    detalheSheet['!cols'] = [
-      { wch: 18 }, { wch: 30 }, { wch: 16 }, { wch: 40 }, { wch: 14 },
-      { wch: 40 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 20 }
-    ];
-    XLSX.utils.book_append_sheet(workbook, detalheSheet, 'Detalhe');
+    applyBordersToSheet(detalheSheet);
 
     const suffix = submittedClienteAdj !== 'Todos' ? `_${submittedClienteAdj.replace(/[^a-z0-9_-]+/gi, '_')}` : '';
-    XLSX.writeFile(workbook, `relatorio_propostas_adjudicadas${suffix}.xlsx`);
+    await downloadWorkbook(workbook, `relatorio_propostas_adjudicadas${suffix}.xlsx`);
   };
 
   const titles = {
@@ -1468,6 +1556,18 @@ export default function Relatorios({ user = null }) {
               </select>
             </div>
             <div style={gcFieldStyle}>
+              <label style={gcLabelStyle}>Tipo de Contacto</label>
+              <select value={tipoContactoGC} onChange={(e) => setTipoContactoGC(e.target.value)} style={gcControlStyle}>
+                {tipoContactoOptions.map((t) => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+            <div style={gcFieldStyle}>
+              <label style={gcLabelStyle}>Localidade</label>
+              <select value={localidadeGC} onChange={(e) => setLocalidadeGC(e.target.value)} style={gcControlStyle}>
+                {localidadeOptions.map((l) => <option key={l}>{l}</option>)}
+              </select>
+            </div>
+            <div style={gcFieldStyle}>
               <label style={{ ...gcLabelStyle, color: '#c0392b' }}>Data de Início</label>
               <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} style={gcControlStyle} />
             </div>
@@ -1482,7 +1582,7 @@ export default function Relatorios({ user = null }) {
               type="button"
               style={actionBtn}
               onClick={() => {
-                setSubmittedGC({ gestor, cliente: clienteGC, dataInicio, dataFim });
+                setSubmittedGC({ gestor, cliente: clienteGC, tipoContacto: tipoContactoGC, localidade: localidadeGC, dataInicio, dataFim });
                 setShowGestorClientes(true);
               }}
             >
@@ -1495,9 +1595,11 @@ export default function Relatorios({ user = null }) {
                 const fallbackGestor = isCurrentUserPrivileged ? 'Todos' : (gestorOptions[0] || 'Todos');
                 setGestor(fallbackGestor);
                 setClienteGC('Todos');
+                setTipoContactoGC('Todos');
+                setLocalidadeGC('Todos');
                 setDataInicio('');
                 setDataFim('');
-                setSubmittedGC({ gestor: fallbackGestor, cliente: 'Todos', dataInicio: '', dataFim: '' });
+                setSubmittedGC({ gestor: fallbackGestor, cliente: 'Todos', tipoContacto: 'Todos', localidade: 'Todos', dataInicio: '', dataFim: '' });
                 setShowGestorClientes(true);
                 setExpandedGestoresClientes({});
                 setExpandedDatasGestorClientes({});
@@ -1606,11 +1708,12 @@ export default function Relatorios({ user = null }) {
                                           <div style={detailLineStyle}><strong>Duração:</strong> {item.duracao}</div>
                                           <div style={detailLineStyle}><strong>Tipo de contacto:</strong> {item.tipoContacto}</div>
                                           <div style={detailLineStyle}><strong>Tipo de cliente:</strong> {item.tipoCliente}</div>
+                                          <div style={detailLineStyle}><strong>Localidade:</strong> {item.localidade}</div>
                                           <div style={detailLineStyle}><strong>Contacto efetuado?</strong> {item.contactoEfetuado ? 'Sim' : 'Não'}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Resumo do Contacto:</strong> {item.motivoResumo}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Tipo do Próximo Contacto:</strong> {item.motivoTipoProximo}</div>
                                           <div style={detailLineStyle}><strong>Data do Próximo Contacto:</strong> {item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : '—'}</div>
-                                          <div style={detailLineStyle}><strong>Assunto Tratado?</strong> {item.assuntoTratado ? 'Sim' : 'Não'}</div>
+                                          <div style={detailLineStyle}><strong>Processo encerrado?</strong> {item.assuntoTratado ? 'Sim' : 'Não'}</div>
                                         </div>
                                       ))}
                                     </div>
@@ -1631,7 +1734,14 @@ export default function Relatorios({ user = null }) {
         </>
       )}
 
-      {tipo === 'clientes' && (
+      {tipo === 'clientes' && normalizedRole !== 'admin' && (
+        <p style={{ marginTop: 18, color: '#b32d2e' }}>
+          Não tens permissão para aceder a este relatório. Esta secção está
+          disponível apenas para administradores.
+        </p>
+      )}
+
+      {tipo === 'clientes' && normalizedRole === 'admin' && (
         <>
           <div style={rowStyle}>
             <label style={labelStyle}>Cliente</label>
@@ -1731,6 +1841,7 @@ function ResumoMetricsBlock({ resumo }) {
       <div style={miniTableWrapStyle}>
         <MiniTable title="Por Tipo de Contacto" rows={resumo.porTipoContacto} />
         <MiniTable title="Por Tipo de Cliente" rows={resumo.porTipoCliente} />
+        <MiniTable title="Por Localidade" rows={resumo.porLocalidade} />
       </div>
     </div>
   );

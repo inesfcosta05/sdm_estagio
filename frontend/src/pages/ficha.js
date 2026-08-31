@@ -622,9 +622,9 @@ const Fichas = ({ user = null }) => {
           <option value="lixo">Lixo</option>
         </select>
         <select value={filtroAssunto} onChange={(e) => { setFiltroAssunto(e.target.value); setPage(1); }} style={selectStyle}>
-          <option value="">Todos os assuntos</option>
-          <option value="tratado">Assunto tratado</option>
-          <option value="nao_tratado">Assunto não tratado</option>
+          <option value="">Todos os processos</option>
+          <option value="tratado">Processo encerrado</option>
+          <option value="nao_tratado">Processo não encerrado</option>
         </select>
         <button type="button" style={btnStyle} onClick={() => setPage(1)}>Filtrar</button>
       </>}

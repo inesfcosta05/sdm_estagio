@@ -19,7 +19,9 @@ export default function NovoCliente() {
     pessoa_contacto_cargo: '',
     pessoa_contacto_telefone_email: '',
     morada: '',
+    localidade: '',
     nif: '',
+    observacoes: '',
     comercial: '',
   });
   const [sucesso, setSucesso] = useState(false);
@@ -68,7 +70,9 @@ export default function NovoCliente() {
     { name: 'pessoa_contacto_cargo', label: 'Pessoa de contacto - Cargo' },
     { name: 'pessoa_contacto_telefone_email', label: 'Pessoa de contacto - Telefone/Email' },
     { name: 'morada', label: 'Morada' },
+    { name: 'localidade', label: 'Localidade' },
     { name: 'nif', label: 'NIF', required: true },
+    { name: 'observacoes', label: 'Observações', type: 'textarea' },
     { name: 'comercial', label: 'Comercial', required: true, type: 'select' },
   ];
 
@@ -178,6 +182,14 @@ export default function NovoCliente() {
                     <option key={`field-${c.id || c.value}`} value={c.value}>{c.label}</option>
                   ))}
                 </select>
+              ) : f.type === 'textarea' ? (
+                <textarea
+                  name={f.name}
+                  value={form[f.name]}
+                  onChange={handleChange}
+                  rows={4}
+                  style={{ ...fieldInputStyle, width: '100%', maxWidth: 680, resize: 'vertical' }}
+                />
               ) : (
                 <input
                   type="text"
