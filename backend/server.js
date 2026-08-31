@@ -1011,13 +1011,34 @@ app.get('/api/comerciais', (req, res) => {
           (errFallback, fallbackRows) => {
             if (errFallback) return res.status(500).json({ error: errFallback.message });
 
-            const fromClients = (fallbackRows || []).map((f, idx) => ({
-              id: `legacy-${idx + 1}`,
-              value: f.autor,
-              label: f.autor,
-              username: f.autor,
-              role: 'legacy'
-            }));
+            // These "legacy" rows are a last-resort fallback for author/
+            // comercial_id values on `clients` that don't correspond to any
+            // real row in `users` — e.g. an old numeric author id from
+            // before the migration. If a value here IS a real user's id
+            // (the normal case: fichas/clients store the real WP user id as
+            // author), keeping it anyway creates a duplicate entry with the
+            // same numeric id/value but a junk label (literally "8" instead
+            // of "Beatriz Cardoso") — and since the frontend's id/value
+            // lookup map is keyed by that same numeric string, this junk
+            // entry silently overwrites the real name, so real gestores with
+            // real fichas show up in reports labelled by a bare number
+            // instead of their name. Only keep truly orphaned values.
+            const knownIdentifiers = new Set();
+            mapped.forEach((m) => {
+              if (m.id !== undefined && m.id !== null) knownIdentifiers.add(String(m.id).toLowerCase());
+              if (m.username) knownIdentifiers.add(m.username.toLowerCase());
+              if (m.value) knownIdentifiers.add(String(m.value).toLowerCase());
+            });
+
+            const fromClients = (fallbackRows || [])
+              .filter((f) => !knownIdentifiers.has((f.autor || '').toString().trim().toLowerCase()))
+              .map((f, idx) => ({
+                id: `legacy-${idx + 1}`,
+                value: f.autor,
+                label: f.autor,
+                username: f.autor,
+                role: 'legacy'
+              }));
 
             const source = [...mapped, ...fromClients];
             const dedup = [];

@@ -254,7 +254,9 @@ export default function Relatorios({ user = null }) {
   const [submittedClienteAdj, setSubmittedClienteAdj] = useState('Todos');
   const [submittedClienteProp, setSubmittedClienteProp] = useState('Todos');
   const [submittedDataContactos, setSubmittedDataContactos] = useState('');
+  const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', dataInicio: '', dataFim: '' });
   const [showContactos, setShowContactos] = useState(false);
+  const [showGestorClientes, setShowGestorClientes] = useState(false);
   const [expandedMesesPropostas, setExpandedMesesPropostas] = useState({});
   const [expandedMesesAdjudicadas, setExpandedMesesAdjudicadas] = useState({});
   const [expandedDatasContactos, setExpandedDatasContactos] = useState({});
@@ -377,6 +379,13 @@ export default function Relatorios({ user = null }) {
     return 'Cliente';
   };
 
+  // "Primeiro a escrever, ganha" (em vez de sobrescrever sempre): o backend
+  // já filtra as entradas "legacy" (fallback a partir de author/comercial_id
+  // em `clients` sem utilizador real) que colidam com o id de um utilizador
+  // real, mas mesmo que uma entrada destas apareça, não deve conseguir
+  // substituir o nome verdadeiro de um gestor já mapeado por um valor em
+  // bruto (ex: "8" em vez de "Beatriz Cardoso") — foi exatamente isto que
+  // escondia os sumários de vários gestores reais.
   const gestorMap = useMemo(() => {
     const map = new Map();
     comerciais.forEach((item) => {
@@ -384,19 +393,23 @@ export default function Relatorios({ user = null }) {
       if (!label) return;
       [item.value, item.username, item.id, label, item.label, item.display_name, item.name, item.displayName, item.user_nicename]
         .filter((value) => value !== undefined && value !== null && value !== '')
-        .forEach((value) => map.set(normalizeKey(cleanManagerName(value)), label));
+        .forEach((value) => {
+          const key = normalizeKey(cleanManagerName(value));
+          if (key && !map.has(key)) map.set(key, label);
+        });
     });
     return map;
   }, [comerciais]);
 
   const gestorIdMap = useMemo(() => {
     const idMap = new Map();
+    const setIfAbsent = (key, label) => { if (key && !idMap.has(key)) idMap.set(key, label); };
     comerciais.forEach((item) => {
       const label = cleanManagerName(item.label || item.display_name || item.username || item.value || item.name || item.displayName || '');
       if (!label) return;
-      if (item.id !== undefined && item.id !== null) idMap.set(String(item.id), label);
-      if (item.value !== undefined && item.value !== null) idMap.set(String(item.value), label);
-      if (item.username) idMap.set(String(item.username), label);
+      if (item.id !== undefined && item.id !== null) setIfAbsent(String(item.id), label);
+      if (item.value !== undefined && item.value !== null) setIfAbsent(String(item.value), label);
+      if (item.username) setIfAbsent(String(item.username), label);
     });
     return idMap;
   }, [comerciais]);
@@ -575,7 +588,10 @@ export default function Relatorios({ user = null }) {
     if (!gestorOptions.length) return;
     const fallbackGestor = gestorOptions[0];
     if (!gestorOptions.includes(gestor)) setGestor(fallbackGestor);
-  }, [isCurrentUserPrivileged, gestorOptions, gestor]);
+    if (!gestorOptions.includes(submittedGC.gestor)) {
+      setSubmittedGC((prev) => ({ ...prev, gestor: fallbackGestor }));
+    }
+  }, [isCurrentUserPrivileged, gestorOptions, gestor, submittedGC.gestor]);
 
   // Sem filtro de data escolhido, a aba deve mostrar logo todos os contactos
   // com data do próximo contacto preenchida — não deve depender de um clique
@@ -737,21 +753,21 @@ export default function Relatorios({ user = null }) {
     });
 
     // Filtro 100% flexível: cada campo (gestor, cliente, data início, data
-    // fim) é aplicado só se estiver preenchido — nenhum depende dos outros, e
-    // o resultado atualiza-se sozinho a cada alteração (sem precisar de um
-    // botão "Filtrar"), porque lê `gestor`/`clienteGC`/`dataInicio`/`dataFim`
-    // diretamente em vez de um estado "submetido" separado.
+    // fim) é aplicado só se estiver preenchido no momento em que se carrega
+    // em "Filtrar" — nenhum depende dos outros para funcionar.
+    const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
+
     const filtered = base.filter(item => {
       const normalizedItemGestor = normalizeKey(cleanManagerName(item.gestorNome));
-      const normalizedSubGestor = normalizeKey(cleanManagerName(gestor));
-      const byGestor = gestor === 'Todos' ? true : normalizedItemGestor === normalizedSubGestor;
+      const normalizedSubGestor = normalizeKey(cleanManagerName(subGestor));
+      const byGestor = subGestor === 'Todos' ? true : normalizedItemGestor === normalizedSubGestor;
 
       const normalizedItemCliente = normalizeKey(item.clienteNome || '');
-      const normalizedSubCliente = normalizeKey(clienteGC || '');
-      const byCliente = clienteGC === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
+      const normalizedSubCliente = normalizeKey(subCliente || '');
+      const byCliente = subCliente === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
 
-      const byDataInicio = !dataInicio ? true : (item.dataContacto && item.dataContacto >= dataInicio);
-      const byDataFim = !dataFim ? true : (item.dataContacto && item.dataContacto <= dataFim);
+      const byDataInicio = !subDataInicio ? true : (item.dataContacto && item.dataContacto >= subDataInicio);
+      const byDataFim = !subDataFim ? true : (item.dataContacto && item.dataContacto <= subDataFim);
 
       return byGestor && byCliente && byDataInicio && byDataFim;
     });
@@ -763,8 +779,8 @@ export default function Relatorios({ user = null }) {
       if (d !== 0) return d;
       return a.fichaTitulo.localeCompare(b.fichaTitulo, 'pt');
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- getFichaId/getGestor/getClienteNome/getClienteId/getDuracaoLabel/withDerivedSignals/getTipoCliente are plain closures recreated every render; visibleFichas + the 4 live filter fields are the only inputs that actually change what this computes
-  }, [visibleFichas, gestor, clienteGC, dataInicio, dataFim]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getFichaId/getGestor/getClienteNome/getClienteId/getDuracaoLabel/withDerivedSignals/getTipoCliente are plain closures recreated every render; visibleFichas and submittedGC are the only inputs that actually change what this computes
+  }, [visibleFichas, submittedGC]);
 
   const gestorClientesAgrupadosPorGestor = useMemo(() => {
     const groups = new Map();
@@ -913,10 +929,10 @@ export default function Relatorios({ user = null }) {
     });
 
     const parts = [];
-    if (gestor !== 'Todos') parts.push(gestor);
-    if (clienteGC !== 'Todos') parts.push(clienteGC);
-    if (dataInicio) parts.push(`de_${dataInicio}`);
-    if (dataFim) parts.push(`ate_${dataFim}`);
+    if (submittedGC.gestor !== 'Todos') parts.push(submittedGC.gestor);
+    if (submittedGC.cliente !== 'Todos') parts.push(submittedGC.cliente);
+    if (submittedGC.dataInicio) parts.push(`de_${submittedGC.dataInicio}`);
+    if (submittedGC.dataFim) parts.push(`ate_${submittedGC.dataFim}`);
     const suffix = parts.length ? `_${parts.join('_').replace(/[^a-z0-9_-]+/gi, '_')}` : '';
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1258,12 +1274,25 @@ export default function Relatorios({ user = null }) {
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button
               type="button"
+              style={actionBtn}
+              onClick={() => {
+                setSubmittedGC({ gestor, cliente: clienteGC, dataInicio, dataFim });
+                setShowGestorClientes(true);
+              }}
+            >
+              Filtrar
+            </button>
+            <button
+              type="button"
               style={clearBtn}
               onClick={() => {
-                setGestor(isCurrentUserPrivileged ? 'Todos' : (gestorOptions[0] || 'Todos'));
+                const fallbackGestor = isCurrentUserPrivileged ? 'Todos' : (gestorOptions[0] || 'Todos');
+                setGestor(fallbackGestor);
                 setClienteGC('Todos');
                 setDataInicio('');
                 setDataFim('');
+                setSubmittedGC({ gestor: fallbackGestor, cliente: 'Todos', dataInicio: '', dataFim: '' });
+                setShowGestorClientes(true);
                 setExpandedGestoresClientes({});
                 setExpandedDatasGestorClientes({});
               }}
@@ -1280,9 +1309,7 @@ export default function Relatorios({ user = null }) {
             </button>
           </div>
 
-          {/* Cada filtro (gestor/cliente/datas) aplica-se sozinho e a lista
-              atualiza-se de imediato — não há botão "Filtrar" nem um estado
-              "por submeter": gestorClientesFiltrados já lê os campos ao vivo. */}
+          {showGestorClientes && (
           <div style={{ marginTop: 18 }}>
               <h3 style={reportHeading}>Clientes por Gestor</h3>
               {gestorClientesFiltrados.length === 0 ? (
@@ -1394,6 +1421,7 @@ export default function Relatorios({ user = null }) {
                 </div>
               )}
             </div>
+          )}
         </>
       )}
 
