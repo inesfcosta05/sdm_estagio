@@ -521,6 +521,123 @@ app.get('/api/fichas', (req, res) => {
   );
 });
 
+// The "Propostas" / "Propostas Adjudicadas" fields (serviços propostos,
+// valor total, estado, faturação, ...) are, like data_proximo_contacto,
+// never populated on `fichas` by the WordPress sync — WordPress's REST API
+// doesn't expose Pods custom fields for this CPT at all, so only the real
+// wp_postmeta table (migrated wholesale into this DB) has them. Confirmed
+// the exact meta_keys directly in the DB before writing this (see PT names
+// below vs this app's own column names, which don't match 1:1):
+//   descritivo_da_proposta          -> descritivo_proposta
+//   valor_total_da_proposta         -> valor_total_proposta
+//   estado_da_proposta              -> estado_proposta
+//   data_de_apresentacao_da_proposta -> data_apresentacao_proposta
+//   possibilidade_de_negocio        -> possibilidade_negocio
+//   motivo_da_possibilidade_de_negocio -> motivo_possibilidade_negocio
+//   valor_total_adjudicado          -> valor_total_adjudicado (same name)
+//   descritivo_da_fatura            -> descritivo_fatura
+//   valor_da_fatura                 -> valor_fatura
+//   data_da_fatura                  -> data_fatura
+//   data_prevista_para_o_recebimento -> data_prevista_recebimento
+//   data_do_ultimo_contacto_financeiro -> data_ultimo_contacto_financeiro
+// Plus two Pods repeater fields (line items), each stored as N separately
+// numbered meta rows rather than one field:
+//   servicos_<n>_servico / servicos_<n>_valor             (serviços propostos)
+//   servicos-adjudicados_<n>_servico / _valor              (serviços adjudicados)
+//
+// Registered BEFORE /api/fichas/:id below — Express matches routes in
+// registration order, so if this came after, the literal path
+// "propostas-meta" would be captured as :id instead (and 400 as an invalid
+// numeric id) rather than ever reaching this handler.
+app.get('/api/fichas/propostas-meta', (req, res) => {
+  const scalarQuery = `
+    SELECT
+      post_id,
+      MAX(CASE WHEN meta_key = 'descritivo_da_proposta' THEN meta_value END) AS descritivo_proposta,
+      MAX(CASE WHEN meta_key = 'valor_total_da_proposta' THEN meta_value END) AS valor_total_proposta,
+      MAX(CASE WHEN meta_key = 'estado_da_proposta' THEN meta_value END) AS estado_proposta,
+      MAX(CASE WHEN meta_key = 'data_de_apresentacao_da_proposta' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_apresentacao_proposta,
+      MAX(CASE WHEN meta_key = 'possibilidade_de_negocio' THEN meta_value END) AS possibilidade_negocio,
+      MAX(CASE WHEN meta_key = 'motivo_da_possibilidade_de_negocio' THEN meta_value END) AS motivo_possibilidade_negocio,
+      MAX(CASE WHEN meta_key = 'valor_total_adjudicado' THEN meta_value END) AS valor_total_adjudicado,
+      MAX(CASE WHEN meta_key = 'descritivo_da_fatura' THEN meta_value END) AS descritivo_fatura,
+      MAX(CASE WHEN meta_key = 'valor_da_fatura' THEN meta_value END) AS valor_fatura,
+      MAX(CASE WHEN meta_key = 'data_da_fatura' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_fatura,
+      MAX(CASE WHEN meta_key = 'data_prevista_para_o_recebimento' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_prevista_recebimento,
+      MAX(CASE WHEN meta_key = 'data_do_ultimo_contacto_financeiro' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_ultimo_contacto_financeiro
+    FROM wp_postmeta
+    WHERE meta_key IN (
+      'descritivo_da_proposta', 'valor_total_da_proposta', 'estado_da_proposta', 'data_de_apresentacao_da_proposta',
+      'possibilidade_de_negocio', 'motivo_da_possibilidade_de_negocio',
+      'valor_total_adjudicado', 'descritivo_da_fatura', 'valor_da_fatura', 'data_da_fatura',
+      'data_prevista_para_o_recebimento', 'data_do_ultimo_contacto_financeiro'
+    )
+    GROUP BY post_id
+  `;
+
+  const repeaterQuery = `
+    SELECT post_id, meta_key, meta_value
+    FROM wp_postmeta
+    WHERE (meta_key REGEXP '^servicos_[0-9]+_(servico|valor)$'
+       OR meta_key REGEXP '^servicos-adjudicados_[0-9]+_(servico|valor)$')
+      AND meta_value IS NOT NULL AND meta_value != ''
+  `;
+
+  db.query(scalarQuery, (err, scalarRows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    db.query(repeaterQuery, (err2, repeaterRows) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+
+      const result = {};
+      const getEntry = (postId) => {
+        if (!result[postId]) {
+          result[postId] = {
+            proposta: { servicos: [] },
+            adjudicada: { servicos: [] }
+          };
+        }
+        return result[postId];
+      };
+
+      scalarRows.forEach((row) => {
+        const entry = getEntry(row.post_id);
+        entry.proposta.descritivo = row.descritivo_proposta || null;
+        entry.proposta.valorTotal = row.valor_total_proposta || null;
+        entry.proposta.estado = row.estado_proposta || null;
+        entry.proposta.dataApresentacao = row.data_apresentacao_proposta || null;
+        entry.proposta.possibilidadeNegocio = row.possibilidade_negocio || null;
+        entry.proposta.motivoPossibilidadeNegocio = row.motivo_possibilidade_negocio || null;
+        entry.adjudicada.valorTotal = row.valor_total_adjudicado || null;
+        entry.adjudicada.descritivoFatura = row.descritivo_fatura || null;
+        entry.adjudicada.valorFatura = row.valor_fatura || null;
+        entry.adjudicada.dataFatura = row.data_fatura || null;
+        entry.adjudicada.dataPrevistaRecebimento = row.data_prevista_recebimento || null;
+        entry.adjudicada.dataUltimoContactoFinanceiro = row.data_ultimo_contacto_financeiro || null;
+      });
+
+      const repeaterPattern = /^(servicos|servicos-adjudicados)_(\d+)_(servico|valor)$/;
+      repeaterRows.forEach((row) => {
+        const match = row.meta_key.match(repeaterPattern);
+        if (!match) return;
+        const [, group, idxStr, field] = match;
+        const idx = Number(idxStr);
+        const entry = getEntry(row.post_id);
+        const list = group === 'servicos' ? entry.proposta.servicos : entry.adjudicada.servicos;
+        if (!list[idx]) list[idx] = {};
+        list[idx][field] = row.meta_value;
+      });
+
+      Object.values(result).forEach((entry) => {
+        entry.proposta.servicos = entry.proposta.servicos.filter(Boolean);
+        entry.adjudicada.servicos = entry.adjudicada.servicos.filter(Boolean);
+      });
+
+      res.json(result);
+    });
+  });
+});
+
 app.get('/api/fichas/:id', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {

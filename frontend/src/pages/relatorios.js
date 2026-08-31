@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import DOMPurify from 'dompurify';
 import '../api';
 
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
@@ -35,36 +36,30 @@ const toDatePt = (value) => {
   return `${dd}/${mm}/${yyyy}`;
 };
 
-const isAdjudicada = (ficha) => {
-  const estado = (ficha.estado_proposta || '').toString().trim().toLowerCase();
-  if (estado.includes('adjud')) return true;
-  if ((ficha.servicos_adjudicados || '').toString().trim()) return true;
-  if ((ficha.valor_total_adjudicado || '').toString().trim()) return true;
-  if (hasKeyword(getReportBlob(ficha), /adjudic|aceit|fechad|confirmad/i)) return true;
-  return false;
+// Parses monetary strings from the WordPress meta into a plain number.
+// Values in the real data are inconsistent ("580", "1.390,00€ + iva",
+// "350,00") — strip anything that isn't a digit/separator, then normalize
+// PT-style thousands "." and decimal "," to a parseable form. Returns null
+// (not 0) when nothing numeric survives, so callers can tell "no value" from
+// "zero" and skip it from sums rather than silently treating it as 0.
+const parseMoeda = (value) => {
+  if (value === null || value === undefined) return null;
+  const cleaned = value.toString().trim().replace(/[^\d,.-]/g, '');
+  if (!cleaned) return null;
+  let normalized = cleaned;
+  if (normalized.includes(',') && normalized.includes('.')) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (normalized.includes(',')) {
+    normalized = normalized.replace(',', '.');
+  }
+  const num = parseFloat(normalized);
+  return Number.isFinite(num) ? num : null;
 };
 
-const hasProposta = (ficha) => {
-  if (toDateOnly(ficha.data_apresentacao_proposta)) return true;
-  if ((ficha.descritivo_proposta || '').toString().trim()) return true;
-  if ((ficha.servicos_proposta || '').toString().trim()) return true;
-  const blob = [
-    ficha.title,
-    ficha.titulo,
-    ficha.post_title,
-    ficha.post_content,
-    ficha.estado_proposta,
-    ficha.descritivo_proposta,
-    ficha.servicos_proposta,
-    ficha.servicos_adjudicados,
-    ficha.valor_total_proposta,
-    ficha.valor_total_adjudicado
-  ]
-    .map((value) => (value || '').toString().trim())
-    .filter(Boolean)
-    .join(' ');
-
-  return hasKeyword(blob, /propost|orçament|orcament|adjudic/i);
+const formatMoeda = (value) => {
+  const num = parseMoeda(value);
+  if (num === null) return '—';
+  return num.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' });
 };
 
 const cleanReportText = (value) => {
@@ -102,27 +97,6 @@ const cleanManagerName = (value) => {
 
   return raw;
 };
-
-const getReportBlob = (ficha) => [
-  ficha.title,
-  ficha.titulo,
-  ficha.post_title,
-  ficha.post_content,
-  ficha.estado_proposta,
-  ficha.descritivo_proposta,
-  ficha.servicos_proposta,
-  ficha.servicos_adjudicados,
-  ficha.motivo_resumo_contacto,
-  ficha.motivo_tipo_proximo_contacto,
-  ficha.tipo_proximo_contacto,
-  ficha.contacto_efetuado,
-  ficha.follow_up,
-  ficha.novo_contacto,
-  ficha.assunto_tratado
-]
-  .map((value) => (value || '').toString().trim())
-  .filter(Boolean)
-  .join(' ');
 
 const hasKeyword = (text, pattern) => pattern.test((text || '').toString().toLowerCase());
 
@@ -204,6 +178,7 @@ export default function Relatorios({ user = null }) {
   const [fichas, setFichas] = useState([]);
   const [clientes, setClientes] = useState([]);
   const [comerciais, setComerciais] = useState([]);
+  const [propostasMeta, setPropostasMeta] = useState({});
   const [loading, setLoading] = useState(true);
 
   const [clienteAdj, setClienteAdj] = useState('Todos');
@@ -219,31 +194,36 @@ export default function Relatorios({ user = null }) {
   const [submittedDataContactos, setSubmittedDataContactos] = useState('');
   const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', dataInicio: '', dataFim: '' });
   const [showContactos, setShowContactos] = useState(false);
-  const [expandedDatasPropostas, setExpandedDatasPropostas] = useState({});
+  const [expandedMesesPropostas, setExpandedMesesPropostas] = useState({});
+  const [expandedClientesAdjudicadas, setExpandedClientesAdjudicadas] = useState({});
   const [expandedDatasContactos, setExpandedDatasContactos] = useState({});
   const [showGestorClientes, setShowGestorClientes] = useState(false);
   const [expandedGestoresClientes, setExpandedGestoresClientes] = useState({});
   const [expandedDatasGestorClientes, setExpandedDatasGestorClientes] = useState({});
 
   const [pesquisaPropostas, setPesquisaPropostas] = useState('');
+  const [pesquisaAdjudicadas, setPesquisaAdjudicadas] = useState('');
 
   useEffect(() => {
     let mounted = true;
     const fetchAll = () => Promise.all([
       axios.get('/api/fichas').catch(() => ({ data: [] })),
       axios.get('/api/clientes').catch(() => ({ data: [] })),
-      axios.get('/api/comerciais').catch(() => ({ data: [] }))
-    ]).then(([fRes, cRes, mRes]) => {
+      axios.get('/api/comerciais').catch(() => ({ data: [] })),
+      axios.get('/api/fichas/propostas-meta').catch(() => ({ data: {} }))
+    ]).then(([fRes, cRes, mRes, pmRes]) => {
       if (!mounted) return;
       setFichas(Array.isArray(fRes.data) ? fRes.data : []);
       setClientes(Array.isArray(cRes.data) ? cRes.data : []);
       setComerciais(Array.isArray(mRes.data) ? mRes.data : []);
+      setPropostasMeta(pmRes.data && typeof pmRes.data === 'object' ? pmRes.data : {});
       setLoading(false);
     }).catch(() => {
       if (!mounted) return;
       setFichas([]);
       setClientes([]);
       setComerciais([]);
+      setPropostasMeta({});
       setLoading(false);
     });
 
@@ -405,14 +385,36 @@ export default function Relatorios({ user = null }) {
 
   const getFichaId = (ficha) => ficha.id || ficha.legacy_id || ficha.ID;
   const getFichaTitulo = (ficha) => asText(ficha.title, ficha.titulo, ficha.post_title, ficha.tipo_contacto, ficha.nome) || '(sem título)';
-  const getPropostaTitulo = (ficha) => {
-    const descritivo = cleanReportText(ficha.descritivo_proposta);
-    const servicos = cleanReportText(ficha.servicos_proposta);
-    const titulo = cleanReportText(ficha.title || ficha.titulo || ficha.post_title);
-    return descritivo || servicos || titulo || '(sem título)';
+
+  // propostasMeta is keyed by legacy_id (= WordPress post_id, where the real
+  // serviços/valores/faturação live in wp_postmeta — see GET
+  // /api/fichas/propostas-meta on the backend). Not getFichaId(ficha), which
+  // prefers the local `id` — legacy_id is the only key that matches.
+  const getPropostaMeta = (ficha) => propostasMeta[ficha.legacy_id]?.proposta || null;
+  const getAdjudicadaMeta = (ficha) => propostasMeta[ficha.legacy_id]?.adjudicada || null;
+
+  // "Escolha uma opção" is the Pods dropdown's own placeholder value — filled
+  // on thousands of fichas that never actually had a real estado chosen, so
+  // it's treated as empty rather than a real state.
+  const isEstadoPlaceholder = (value) => {
+    const raw = (value || '').toString().trim().toLowerCase();
+    return !raw || raw === 'escolha uma opção' || raw === 'escolha uma opcao';
   };
 
-  const getPropostaData = (ficha) => ficha.data_apresentacao_proposta || ficha.created_at || ficha.updated_at;
+  const hasPropostaReal = (ficha) => {
+    const meta = getPropostaMeta(ficha);
+    if (!meta) return false;
+    return (meta.servicos && meta.servicos.length > 0) || parseMoeda(meta.valorTotal) !== null || !!cleanReportText(meta.descritivo);
+  };
+
+  const isAdjudicadaReal = (ficha) => {
+    const meta = getAdjudicadaMeta(ficha);
+    if (!meta) return false;
+    return (meta.servicos && meta.servicos.length > 0)
+      || parseMoeda(meta.valorTotal) !== null
+      || !!cleanReportText(meta.descritivoFatura)
+      || parseMoeda(meta.valorFatura) !== null;
+  };
   // "Contactos a Efetuar" só existe para fichas com data do PRÓXIMO contacto
   // preenchida — sem fallback para data_contacto/created_at/updated_at, que
   // são datas de contactos já passados, não do que falta fazer.
@@ -489,33 +491,82 @@ export default function Relatorios({ user = null }) {
     }
   }, [tipo]);
 
-  const propostasFiltradas = (() => {
-    const byTipo = visibleFichas.filter((ficha) => hasProposta(ficha));
-    const byEstado = tipo === 'propostas-adjudicadas'
-      ? byTipo.filter((ficha) => isAdjudicada(ficha))
-      : byTipo.filter((ficha) => !isAdjudicada(ficha));
-    const byCliente = (tipo === 'propostas-adjudicadas' ? submittedClienteAdj : submittedClienteProp) === 'Todos'
-      ? byEstado
-      : byEstado.filter((ficha) => getClienteNome(ficha) === (tipo === 'propostas-adjudicadas' ? submittedClienteAdj : submittedClienteProp));
+  // Aba "Propostas" (Contacto Comercial): só fichas com um valor real
+  // preenchido na parte de serviços propostos (ver hasPropostaReal acima),
+  // agrupadas por mês/ano de apresentação da proposta.
+  const propostasReaisFiltradas = (() => {
+    const base = visibleFichas.filter((ficha) => hasPropostaReal(ficha));
+    const byCliente = submittedClienteProp === 'Todos'
+      ? base
+      : base.filter((ficha) => getClienteNome(ficha) === submittedClienteProp);
 
     const pesquisa = pesquisaPropostas.trim().toLowerCase();
-    const byPesquisa = !pesquisa
-      ? byCliente
-      : byCliente.filter((ficha) => {
-        const composed = `${toDatePt(ficha.data_apresentacao_proposta)} ${getPropostaTitulo(ficha)} ${getClienteNome(ficha)}`.toLowerCase();
-        return composed.includes(pesquisa);
-      });
+    if (!pesquisa) return byCliente;
 
-    return [...byPesquisa].sort((a, b) => {
-      const da = toDateOnly(getPropostaData(a));
-      const db = toDateOnly(getPropostaData(b));
-      return db.localeCompare(da);
+    return byCliente.filter((ficha) => {
+      const meta = getPropostaMeta(ficha);
+      const composed = [
+        getClienteNome(ficha),
+        meta?.descritivo,
+        ...(meta?.servicos || []).map((s) => s.servico)
+      ].filter(Boolean).join(' ').toLowerCase();
+      return composed.includes(pesquisa);
     });
   })();
 
-  const propostasAgrupadasPorData = useMemo(
-    () => groupItemsByDate(propostasFiltradas, getPropostaData),
-    [propostasFiltradas]
+  const propostasAgrupadasPorMes = useMemo(
+    () => groupItemsByMonth(propostasReaisFiltradas, (ficha) => getPropostaMeta(ficha)?.dataApresentacao),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getPropostaMeta is a plain closure over propostasMeta, already listed
+    [propostasReaisFiltradas, propostasMeta]
+  );
+
+  // Aba "Propostas Adjudicadas" (Contacto Financeiro): só fichas com um
+  // valor real preenchido em serviços adjudicados/faturação (ver
+  // isAdjudicadaReal acima), agrupadas por cliente com subtotal por cliente
+  // e um total geral consolidado no topo.
+  const adjudicadasReaisFiltradas = (() => {
+    const base = visibleFichas.filter((ficha) => isAdjudicadaReal(ficha));
+    const byCliente = submittedClienteAdj === 'Todos'
+      ? base
+      : base.filter((ficha) => getClienteNome(ficha) === submittedClienteAdj);
+
+    const pesquisa = pesquisaAdjudicadas.trim().toLowerCase();
+    if (!pesquisa) return byCliente;
+
+    return byCliente.filter((ficha) => {
+      const meta = getAdjudicadaMeta(ficha);
+      const composed = [
+        getClienteNome(ficha),
+        meta?.descritivoFatura,
+        ...(meta?.servicos || []).map((s) => s.servico)
+      ].filter(Boolean).join(' ').toLowerCase();
+      return composed.includes(pesquisa);
+    });
+  })();
+
+  const adjudicadasAgrupadasPorCliente = useMemo(() => {
+    const groups = new Map();
+    adjudicadasReaisFiltradas.forEach((ficha) => {
+      const clienteNome = getClienteNome(ficha);
+      if (!groups.has(clienteNome)) groups.set(clienteNome, []);
+      groups.get(clienteNome).push(ficha);
+    });
+
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, 'pt'))
+      .map(([clienteNome, items]) => {
+        const subtotal = items.reduce((sum, ficha) => {
+          const valor = parseMoeda(getAdjudicadaMeta(ficha)?.valorTotal);
+          return sum + (valor || 0);
+        }, 0);
+        return { clienteNome, items, subtotal };
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getAdjudicadaMeta/getClienteNome are plain closures over propostasMeta/clientes, already covered by these deps
+  }, [adjudicadasReaisFiltradas, propostasMeta]);
+
+  const totalConsolidadoAdjudicadas = useMemo(
+    () => adjudicadasAgrupadasPorCliente.reduce((sum, grupo) => sum + grupo.subtotal, 0),
+    [adjudicadasAgrupadasPorCliente]
   );
 
   const contactosFiltrados = (() => {
@@ -781,24 +832,30 @@ export default function Relatorios({ user = null }) {
               style={actionBtn}
               onClick={() => {
                 setSubmittedClienteAdj(clienteAdj);
-                setExpandedDatasPropostas({});
+                setExpandedClientesAdjudicadas({});
               }}
             >
-              Ver propostas adjudicadas
+              Filtrar
             </button>
+            <input
+              type="search"
+              placeholder="Pesquisar cliente, serviço..."
+              value={pesquisaAdjudicadas}
+              onChange={(e) => setPesquisaAdjudicadas(e.target.value)}
+              style={searchInputStyle}
+            />
           </div>
 
-          <ResultadosPropostas
-            clienteSelecionado={submittedClienteAdj}
-            pesquisa={pesquisaPropostas}
-            setPesquisa={setPesquisaPropostas}
-            grupos={propostasAgrupadasPorData}
-            expandedDatasPropostas={expandedDatasPropostas}
-            setExpandedDatasPropostas={setExpandedDatasPropostas}
+          <PropostasAdjudicadasFinanceiro
+            grupos={adjudicadasAgrupadasPorCliente}
+            totalConsolidado={totalConsolidadoAdjudicadas}
+            totalCount={adjudicadasReaisFiltradas.length}
+            expandedClientes={expandedClientesAdjudicadas}
+            setExpandedClientes={setExpandedClientesAdjudicadas}
             onOpenFicha={(id) => navigate(`/fichas/${id}/editar`)}
             getFichaId={getFichaId}
-            getPropostaTitulo={getPropostaTitulo}
-            getClienteNome={getClienteNome}
+            getGestor={getGestor}
+            getAdjudicadaMeta={getAdjudicadaMeta}
           />
         </>
       )}
@@ -815,24 +872,31 @@ export default function Relatorios({ user = null }) {
               style={actionBtn}
               onClick={() => {
                 setSubmittedClienteProp(clienteProp);
-                setExpandedDatasPropostas({});
+                setExpandedMesesPropostas({});
               }}
             >
-              Ver propostas
+              Filtrar
             </button>
+            <input
+              type="search"
+              placeholder="Pesquisar cliente, serviço..."
+              value={pesquisaPropostas}
+              onChange={(e) => setPesquisaPropostas(e.target.value)}
+              style={searchInputStyle}
+            />
           </div>
 
-          <ResultadosPropostas
-            clienteSelecionado={submittedClienteProp}
-            pesquisa={pesquisaPropostas}
-            setPesquisa={setPesquisaPropostas}
-            grupos={propostasAgrupadasPorData}
-            expandedDatasPropostas={expandedDatasPropostas}
-            setExpandedDatasPropostas={setExpandedDatasPropostas}
+          <PropostasComerciais
+            grupos={propostasAgrupadasPorMes}
+            totalCount={propostasReaisFiltradas.length}
+            expandedMeses={expandedMesesPropostas}
+            setExpandedMeses={setExpandedMesesPropostas}
             onOpenFicha={(id) => navigate(`/fichas/${id}/editar`)}
             getFichaId={getFichaId}
-            getPropostaTitulo={getPropostaTitulo}
             getClienteNome={getClienteNome}
+            getGestor={getGestor}
+            getPropostaMeta={getPropostaMeta}
+            isEstadoPlaceholder={isEstadoPlaceholder}
           />
         </>
       )}
@@ -1106,75 +1170,175 @@ export default function Relatorios({ user = null }) {
   );
 }
 
-function ResultadosPropostas({ clienteSelecionado, pesquisa, setPesquisa, grupos, expandedDatasPropostas, setExpandedDatasPropostas, onOpenFicha, getFichaId, getPropostaTitulo, getClienteNome }) {
-  if (!clienteSelecionado) return null;
-
-  const gruposFiltrados = grupos
-    .map((grupo) => ({
-      ...grupo,
-      items: clienteSelecionado === 'Todos'
-        ? grupo.items
-        : grupo.items.filter((ficha) => getClienteNome(ficha) === clienteSelecionado)
-    }))
-    .filter((grupo) => grupo.items.length > 0);
-
-  const itens = gruposFiltrados.flatMap((grupo) => grupo.items);
+// Toggle to reveal a proposal's free-text descriptive HTML — these blobs
+// (copy-pasted from the original proposal documents) can run to hundreds of
+// lines, so they stay collapsed by default rather than blowing up the card.
+function DescritivoExpandivel({ html }) {
+  const [open, setOpen] = useState(false);
+  if (!html) return null;
 
   return (
-    <div style={{ marginTop: 18 }}>
-      <h3 style={reportHeading}>Propostas apresentadas por: {clienteSelecionado}</h3>
+    <div style={{ marginTop: 8 }}>
+      <button type="button" style={descritivoToggleStyle} onClick={() => setOpen((prev) => !prev)}>
+        {open ? 'Ocultar descritivo' : 'Ver descritivo da proposta'}
+      </button>
+      {open && (
+        <div style={descritivoBoxStyle} dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />
+      )}
+    </div>
+  );
+}
 
-      <div style={{ marginBottom: 12 }}>
-        <input
-          type="search"
-          placeholder="Pesquisar na lista..."
-          value={pesquisa}
-          onChange={(e) => setPesquisa(e.target.value)}
-          style={searchInputStyle}
-        />
+// Aba "Propostas" (Contacto Comercial): um cartão por ficha, agrupados por
+// mês/ano de apresentação, cada um com a lista de serviços propostos e o
+// valor total — layout de cartões para ser fácil de ler ficha a ficha.
+function PropostasComerciais({
+  grupos, totalCount, expandedMeses, setExpandedMeses,
+  onOpenFicha, getFichaId, getClienteNome, getGestor, getPropostaMeta, isEstadoPlaceholder
+}) {
+  if (totalCount === 0) {
+    return <p style={{ marginTop: 8 }}>Sem propostas com serviços preenchidos para os filtros atuais.</p>;
+  }
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      {grupos.map((grupo) => (
+        <div key={`prop-mes-${grupo.monthKey}`} style={dateSectionStyle}>
+          <button
+            type="button"
+            style={dateToggleSimpleStyle}
+            onClick={() => setExpandedMeses((prev) => ({ ...prev, [grupo.monthKey]: !(prev[grupo.monthKey] ?? true) }))}
+          >
+            <span style={dateChevronSimpleStyle}>{(expandedMeses[grupo.monthKey] ?? true) ? '▼' : '▶'}</span>
+            <span style={dateHeadingStyle}>{grupo.monthLabel}</span>
+            <span style={dateCountSimpleStyle}>({grupo.items.length})</span>
+          </button>
+
+          {(expandedMeses[grupo.monthKey] ?? true) && (
+            <div style={propostaCardsGridStyle}>
+              {grupo.items.map((ficha) => {
+                const meta = getPropostaMeta(ficha) || {};
+                const fichaId = getFichaId(ficha);
+                return (
+                  <div key={`prop-${fichaId}`} style={propostaCardStyle}>
+                    <div style={propostaCardHeaderStyle}>
+                      <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(fichaId)} title="Editar ficha">
+                        {getClienteNome(ficha)}
+                      </button>
+                      {!isEstadoPlaceholder(meta.estado) && meta.estado && (
+                        <span style={estadoBadgeStyle}>{meta.estado}</span>
+                      )}
+                    </div>
+                    <div style={detailLineStyle}><strong>Gestor:</strong> {getGestor(ficha)}</div>
+                    <div style={detailLineStyle}><strong>Data de apresentação:</strong> {meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : '—'}</div>
+
+                    {meta.servicos && meta.servicos.length > 0 && (
+                      <table style={servicosTableStyle}>
+                        <thead>
+                          <tr><th style={servicosThStyle}>Serviço</th><th style={servicosThStyle}>Valor</th></tr>
+                        </thead>
+                        <tbody>
+                          {meta.servicos.map((servico, idx) => (
+                            <tr key={`${fichaId}-servico-${idx}`}>
+                              <td style={servicosTdStyle}>{servico.servico || '—'}</td>
+                              <td style={servicosTdStyle}>{servico.valor || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+
+                    <div style={propostaTotalStyle}>Valor total: <strong>{formatMoeda(meta.valorTotal)}</strong></div>
+
+                    <DescritivoExpandivel html={meta.descritivo} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Aba "Propostas Adjudicadas" (Contacto Financeiro): agrupado por cliente
+// com subtotal, um banner de total consolidado no topo, e uma tabela por
+// cliente com os serviços adjudicados e dados de faturação de cada ficha.
+function PropostasAdjudicadasFinanceiro({
+  grupos, totalConsolidado, totalCount, expandedClientes, setExpandedClientes,
+  onOpenFicha, getFichaId, getGestor, getAdjudicadaMeta
+}) {
+  if (totalCount === 0) {
+    return <p style={{ marginTop: 8 }}>Sem propostas adjudicadas com serviços ou faturação preenchidos para os filtros atuais.</p>;
+  }
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={consolidatedBannerStyle}>
+        <span style={summaryTitleStyle}>Total Consolidado</span>
+        <strong style={consolidatedValueStyle}>{formatMoeda(totalConsolidado)}</strong>
+        <span style={summaryMetricLabelStyle}>
+          {totalCount} proposta{totalCount === 1 ? '' : 's'} adjudicada{totalCount === 1 ? '' : 's'} em {grupos.length} cliente{grupos.length === 1 ? '' : 's'}
+        </span>
       </div>
 
-      {itens.length === 0 ? (
-        <p>Sem resultados para os filtros atuais.</p>
-      ) : (
-        <div style={listStyle}>
-          {gruposFiltrados.map((grupo) => (
-            <div key={`prop-data-${grupo.dateKey}`} style={dateSectionStyle}>
-              <button
-                type="button"
-                style={dateToggleSimpleStyle}
-                onClick={() => {
-                  setExpandedDatasPropostas((prev) => ({
-                    ...prev,
-                    [grupo.dateKey]: !(prev[grupo.dateKey] ?? true)
-                  }));
-                }}
-              >
-                <span style={dateChevronSimpleStyle}>{(expandedDatasPropostas[grupo.dateKey] ?? true) ? '▼' : '▶'}</span>
-                <span style={dateHeadingStyle}>{grupo.dateLabel}</span>
-                <span style={dateCountSimpleStyle}>({grupo.items.length})</span>
-              </button>
+      {grupos.map((grupo) => (
+        <div key={`adj-cliente-${grupo.clienteNome}`} style={dateSectionStyle}>
+          <button
+            type="button"
+            style={dateToggleSimpleStyle}
+            onClick={() => setExpandedClientes((prev) => ({ ...prev, [grupo.clienteNome]: !(prev[grupo.clienteNome] ?? true) }))}
+          >
+            <span style={dateChevronSimpleStyle}>{(expandedClientes[grupo.clienteNome] ?? true) ? '▼' : '▶'}</span>
+            <span style={dateHeadingStyle}>{grupo.clienteNome}</span>
+            <span style={dateCountSimpleStyle}>({grupo.items.length}) — {formatMoeda(grupo.subtotal)}</span>
+          </button>
 
-              {(expandedDatasPropostas[grupo.dateKey] ?? true) && (
-                <div style={listStyle}>
+          {(expandedClientes[grupo.clienteNome] ?? true) && (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={adjudicadaTableStyle}>
+                <thead>
+                  <tr>
+                    <th style={servicosThStyle}>Ficha</th>
+                    <th style={servicosThStyle}>Gestor</th>
+                    <th style={servicosThStyle}>Serviços adjudicados</th>
+                    <th style={servicosThStyle}>Valor total</th>
+                    <th style={servicosThStyle}>Faturação</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {grupo.items.map((ficha) => {
+                    const meta = getAdjudicadaMeta(ficha) || {};
                     const fichaId = getFichaId(ficha);
-                    const propostaTitulo = getPropostaTitulo(ficha);
-                    const clienteNome = getClienteNome(ficha);
                     return (
-                      <div key={`prop-${fichaId}`} style={dateRowStyle}>
-                        <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(fichaId)} title="Editar ficha">
-                          {propostaTitulo} - {clienteNome}
-                        </button>
-                      </div>
+                      <tr key={`adj-${fichaId}`}>
+                        <td style={servicosTdStyle}>
+                          <button type="button" style={reportLinkStyle} onClick={() => onOpenFicha(fichaId)} title="Editar ficha">
+                            Ver ficha
+                          </button>
+                        </td>
+                        <td style={servicosTdStyle}>{getGestor(ficha)}</td>
+                        <td style={servicosTdStyle}>
+                          {meta.servicos && meta.servicos.length > 0
+                            ? meta.servicos.map((servico) => servico.servico).filter(Boolean).join(', ')
+                            : '—'}
+                        </td>
+                        <td style={servicosTdStyle}><strong>{formatMoeda(meta.valorTotal)}</strong></td>
+                        <td style={servicosTdStyle}>
+                          {meta.valorFatura || meta.dataFatura
+                            ? `${formatMoeda(meta.valorFatura)}${meta.dataFatura ? ' em ' + toDatePt(meta.dataFatura) : ''}`
+                            : '—'}
+                        </td>
+                      </tr>
                     );
                   })}
-                </div>
-              )}
+                </tbody>
+              </table>
             </div>
-          ))}
+          )}
         </div>
-      )}
+      ))}
     </div>
   );
 }
@@ -1224,3 +1388,22 @@ const gcControlStyle = {
   boxSizing: 'border-box',
   background: '#fff'
 };
+
+// Aba "Propostas" — cartões
+const propostaCardsGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12, marginTop: 4 };
+const propostaCardStyle = { background: '#fff', border: '1px solid #dce3ea', borderRadius: 8, padding: '12px 14px' };
+const propostaCardHeaderStyle = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 };
+const estadoBadgeStyle = { background: '#eef2ff', color: '#3730a3', fontSize: '0.78rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999, whiteSpace: 'nowrap' };
+const propostaTotalStyle = { marginTop: 8, fontSize: '1rem', color: '#1d2327' };
+const descritivoToggleStyle = { ...clearBtn, padding: 0, marginTop: 4 };
+const descritivoBoxStyle = { marginTop: 6, padding: '10px 12px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: '0.85rem', lineHeight: 1.5, maxHeight: 320, overflowY: 'auto' };
+
+// Tabelas de serviços (partilhadas entre Propostas e Propostas Adjudicadas)
+const servicosTableStyle = { width: '100%', borderCollapse: 'collapse', marginTop: 8, fontSize: '0.88rem' };
+const servicosThStyle = { textAlign: 'left', borderBottom: '1px solid #dce3ea', padding: '4px 6px', color: '#4b5563', fontWeight: 600 };
+const servicosTdStyle = { borderBottom: '1px solid #f0f1f2', padding: '4px 6px' };
+
+// Aba "Propostas Adjudicadas" — banner de total + tabela por cliente
+const consolidatedBannerStyle = { display: 'flex', alignItems: 'baseline', gap: 14, background: '#eef7f0', border: '1px solid #bfe3c5', borderRadius: 8, padding: '12px 16px', marginBottom: 14 };
+const consolidatedValueStyle = { fontSize: '1.6rem', color: '#1e7a34' };
+const adjudicadaTableStyle = { width: '100%', borderCollapse: 'collapse', marginTop: 4, fontSize: '0.9rem', minWidth: 640 };
