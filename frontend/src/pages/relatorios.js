@@ -204,14 +204,23 @@ const buildResumoMetrics = (items) => {
   const porTipoCliente = {};
   TIPOS_CLIENTE.forEach((tipo) => { porTipoCliente[tipo] = 0; });
 
+  const clientesUnicos = new Set();
+
   items.forEach((item) => {
     const tipoContacto = TIPOS_CONTACTO.includes(item.tipoContacto) ? item.tipoContacto : TIPO_CONTACTO_OUTRO;
     porTipoContacto[tipoContacto] += 1;
     porTipoCliente[item.tipoCliente] = (porTipoCliente[item.tipoCliente] || 0) + 1;
+    // "Total de Clientes" conta clientes reais (exclui "Não Cliente", que por
+    // definição não corresponde a nenhum cliente) — um cliente com várias
+    // fichas só conta uma vez.
+    if (item.tipoCliente !== 'Não Cliente') {
+      clientesUnicos.add(item.clienteId || item.clienteNome);
+    }
   });
 
   return {
     total: items.length,
+    totalClientes: clientesUnicos.size,
     agendados: items.filter((item) => item.sinalAgendado).length,
     followUp: items.filter((item) => item.sinalFollowUp).length,
     reforcos: items.filter((item) => item.sinalReforco).length,
@@ -245,12 +254,10 @@ export default function Relatorios({ user = null }) {
   const [submittedClienteAdj, setSubmittedClienteAdj] = useState('Todos');
   const [submittedClienteProp, setSubmittedClienteProp] = useState('Todos');
   const [submittedDataContactos, setSubmittedDataContactos] = useState('');
-  const [submittedGC, setSubmittedGC] = useState({ gestor: 'Todos', cliente: 'Todos', dataInicio: '', dataFim: '' });
   const [showContactos, setShowContactos] = useState(false);
   const [expandedMesesPropostas, setExpandedMesesPropostas] = useState({});
   const [expandedMesesAdjudicadas, setExpandedMesesAdjudicadas] = useState({});
   const [expandedDatasContactos, setExpandedDatasContactos] = useState({});
-  const [showGestorClientes, setShowGestorClientes] = useState(false);
   const [expandedGestoresClientes, setExpandedGestoresClientes] = useState({});
   const [expandedDatasGestorClientes, setExpandedDatasGestorClientes] = useState({});
 
@@ -568,16 +575,7 @@ export default function Relatorios({ user = null }) {
     if (!gestorOptions.length) return;
     const fallbackGestor = gestorOptions[0];
     if (!gestorOptions.includes(gestor)) setGestor(fallbackGestor);
-    if (!gestorOptions.includes(submittedGC.gestor)) {
-      setSubmittedGC((prev) => ({ ...prev, gestor: fallbackGestor }));
-    }
-  }, [isCurrentUserPrivileged, gestorOptions, gestor, submittedGC.gestor]);
-
-  useEffect(() => {
-    if (tipo === 'gestores') {
-      setShowGestorClientes(true);
-    }
-  }, [tipo]);
+  }, [isCurrentUserPrivileged, gestorOptions, gestor]);
 
   // Sem filtro de data escolhido, a aba deve mostrar logo todos os contactos
   // com data do próximo contacto preenchida — não deve depender de um clique
@@ -704,14 +702,15 @@ export default function Relatorios({ user = null }) {
     });
   }, [tipo, dataContactos, submittedDataContactos, visibleFichas, contactosFiltrados]);
 
-  // BUG CRÍTICO CORRIGIDO: faltava o "useMemo(" — isto era `(() => {...}, [deps])`,
-  // que o JS interpreta como um *operador vírgula* dentro de parêntesis: cria a
-  // função (nunca a chama), depois avalia [deps] e usa isso como valor final. Ou
-  // seja, gestorClientesFiltrados apontava sempre para [visibleFichas, submittedGC]
-  // — um array com 2 elementos errados — em vez da lista de fichas processada.
-  // Todos os `.filter(item => item.sinalX)` a jusante corriam sobre objetos sem
-  // essas propriedades e devolviam sempre [], daí os relatórios de Gestores
-  // aparecerem persistentemente a zeros/vazios.
+  // BUG CRÍTICO CORRIGIDO (histórico): faltava o "useMemo(" — isto era
+  // `(() => {...}, [deps])`, que o JS interpreta como um *operador vírgula*
+  // dentro de parêntesis: cria a função (nunca a chama), depois avalia
+  // [deps] e usa isso como valor final — ou seja, esta variável apontava
+  // sempre para o array de dependências (2 elementos errados) em vez da
+  // lista de fichas processada. Todos os `.filter(item => item.sinalX)` a
+  // jusante corriam sobre objetos sem essas propriedades e devolviam sempre
+  // [], daí os relatórios de Gestores aparecerem persistentemente a
+  // zeros/vazios.
   const gestorClientesFiltrados = useMemo(() => {
     const base = visibleFichas.map((ficha) => {
       const dataContactoStr = toDateOnly(ficha.data_contacto || ficha.post_date || ficha.created_at || ficha.updated_at);
@@ -737,19 +736,22 @@ export default function Relatorios({ user = null }) {
       });
     });
 
-    const { gestor: subGestor, cliente: subCliente, dataInicio: subDataInicio, dataFim: subDataFim } = submittedGC;
-    
+    // Filtro 100% flexível: cada campo (gestor, cliente, data início, data
+    // fim) é aplicado só se estiver preenchido — nenhum depende dos outros, e
+    // o resultado atualiza-se sozinho a cada alteração (sem precisar de um
+    // botão "Filtrar"), porque lê `gestor`/`clienteGC`/`dataInicio`/`dataFim`
+    // diretamente em vez de um estado "submetido" separado.
     const filtered = base.filter(item => {
       const normalizedItemGestor = normalizeKey(cleanManagerName(item.gestorNome));
-      const normalizedSubGestor = normalizeKey(cleanManagerName(subGestor));
-      const byGestor = subGestor === 'Todos' ? true : normalizedItemGestor === normalizedSubGestor;
+      const normalizedSubGestor = normalizeKey(cleanManagerName(gestor));
+      const byGestor = gestor === 'Todos' ? true : normalizedItemGestor === normalizedSubGestor;
 
       const normalizedItemCliente = normalizeKey(item.clienteNome || '');
-      const normalizedSubCliente = normalizeKey(subCliente || '');
-      const byCliente = subCliente === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
+      const normalizedSubCliente = normalizeKey(clienteGC || '');
+      const byCliente = clienteGC === 'Todos' ? true : normalizedItemCliente === normalizedSubCliente;
 
-      const byDataInicio = !subDataInicio ? true : (item.dataContacto && item.dataContacto >= subDataInicio);
-      const byDataFim = !subDataFim ? true : (item.dataContacto && item.dataContacto <= subDataFim);
+      const byDataInicio = !dataInicio ? true : (item.dataContacto && item.dataContacto >= dataInicio);
+      const byDataFim = !dataFim ? true : (item.dataContacto && item.dataContacto <= dataFim);
 
       return byGestor && byCliente && byDataInicio && byDataFim;
     });
@@ -761,8 +763,8 @@ export default function Relatorios({ user = null }) {
       if (d !== 0) return d;
       return a.fichaTitulo.localeCompare(b.fichaTitulo, 'pt');
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- getFichaId/getGestor/getClienteNome/getClienteId/getDuracaoLabel/withDerivedSignals/getTipoCliente are plain closures recreated every render; visibleFichas and submittedGC are the only inputs that actually change what this computes
-  }, [visibleFichas, submittedGC]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getFichaId/getGestor/getClienteNome/getClienteId/getDuracaoLabel/withDerivedSignals/getTipoCliente are plain closures recreated every render; visibleFichas + the 4 live filter fields are the only inputs that actually change what this computes
+  }, [visibleFichas, gestor, clienteGC, dataInicio, dataFim]);
 
   const gestorClientesAgrupadosPorGestor = useMemo(() => {
     const groups = new Map();
@@ -911,10 +913,10 @@ export default function Relatorios({ user = null }) {
     });
 
     const parts = [];
-    if (submittedGC.gestor !== 'Todos') parts.push(submittedGC.gestor);
-    if (submittedGC.cliente !== 'Todos') parts.push(submittedGC.cliente);
-    if (submittedGC.dataInicio) parts.push(`de_${submittedGC.dataInicio}`);
-    if (submittedGC.dataFim) parts.push(`ate_${submittedGC.dataFim}`);
+    if (gestor !== 'Todos') parts.push(gestor);
+    if (clienteGC !== 'Todos') parts.push(clienteGC);
+    if (dataInicio) parts.push(`de_${dataInicio}`);
+    if (dataFim) parts.push(`ate_${dataFim}`);
     const suffix = parts.length ? `_${parts.join('_').replace(/[^a-z0-9_-]+/gi, '_')}` : '';
 
     const buffer = await workbook.xlsx.writeBuffer();
@@ -1256,24 +1258,12 @@ export default function Relatorios({ user = null }) {
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button
               type="button"
-              style={actionBtn}
-              onClick={() => {
-                setSubmittedGC({ gestor, cliente: clienteGC, dataInicio, dataFim });
-                setShowGestorClientes(true);
-              }}
-            >
-              Filtrar
-            </button>
-            <button
-              type="button"
               style={clearBtn}
               onClick={() => {
                 setGestor(isCurrentUserPrivileged ? 'Todos' : (gestorOptions[0] || 'Todos'));
                 setClienteGC('Todos');
                 setDataInicio('');
                 setDataFim('');
-                setSubmittedGC({ gestor: isCurrentUserPrivileged ? 'Todos' : (gestorOptions[0] || 'Todos'), cliente: 'Todos', dataInicio: '', dataFim: '' });
-                setShowGestorClientes(true);
                 setExpandedGestoresClientes({});
                 setExpandedDatasGestorClientes({});
               }}
@@ -1290,8 +1280,10 @@ export default function Relatorios({ user = null }) {
             </button>
           </div>
 
-          {showGestorClientes && (
-            <div style={{ marginTop: 18 }}>
+          {/* Cada filtro (gestor/cliente/datas) aplica-se sozinho e a lista
+              atualiza-se de imediato — não há botão "Filtrar" nem um estado
+              "por submeter": gestorClientesFiltrados já lê os campos ao vivo. */}
+          <div style={{ marginTop: 18 }}>
               <h3 style={reportHeading}>Clientes por Gestor</h3>
               {gestorClientesFiltrados.length === 0 ? (
                 <p>Sem resultados para os filtros atuais.</p>
@@ -1402,7 +1394,6 @@ export default function Relatorios({ user = null }) {
                 </div>
               )}
             </div>
-          )}
         </>
       )}
 
@@ -1413,16 +1404,53 @@ export default function Relatorios({ user = null }) {
   );
 }
 
+// Uma mini-tabela rotulada (Label | Nº) — usada para as repartições por Tipo
+// de Contacto / Tipo de Cliente. Substitui as "pílulas" soltas de antes por
+// algo que se lê como uma grelha estruturada.
+function MiniTable({ title, rows }) {
+  const visibleRows = Object.entries(rows).filter(([, count]) => count > 0);
+  if (visibleRows.length === 0) return null;
+
+  return (
+    <div style={miniTableBoxStyle}>
+      <div style={miniTableTitleStyle}>{title}</div>
+      <table style={miniTableStyle}>
+        <tbody>
+          {visibleRows.map(([label, count]) => (
+            <tr key={label}>
+              <td style={miniTableLabelCellStyle}>{label}</td>
+              <td style={miniTableValueCellStyle}>{count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // Bloco de métricas do resumo (usado tanto no Resumo Global como em cada
-// Sumário por Gestor) — cartões de contagem + as duas repartições novas
-// (Por Tipo de Contacto / Por Tipo de Cliente), omitindo categorias a zero
-// para não poluir o resumo com badges vazios.
+// Sumário por Gestor): 3 números-chave em destaque no topo, uma grelha
+// estruturada com as restantes contagens, e duas mini-tabelas lado a lado
+// para as repartições por Tipo de Contacto / Tipo de Cliente.
 function ResumoMetricsBlock({ resumo }) {
   return (
-    <>
+    <div>
+      <div style={resumoHeroGridStyle}>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{resumo.total}</span>
+          <span style={resumoHeroLabelStyle}>Total de Contactos</span>
+        </div>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{resumo.totalClientes}</span>
+          <span style={resumoHeroLabelStyle}>Total de Clientes</span>
+        </div>
+        <div style={resumoHeroCardStyle}>
+          <span style={resumoHeroValueStyle}>{resumo.realizados}</span>
+          <span style={resumoHeroLabelStyle}>Contactos Realizados</span>
+        </div>
+      </div>
+
       <div style={summaryGridStyle}>
-        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Total de Contactos</span><strong>{resumo.total}</strong></div>
-        <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Realizados</span><strong>{resumo.realizados}</strong></div>
         <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Agendados</span><strong>{resumo.agendados}</strong></div>
         <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Follow Up</span><strong>{resumo.followUp}</strong></div>
         <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Reforços</span><strong>{resumo.reforcos}</strong></div>
@@ -1430,20 +1458,11 @@ function ResumoMetricsBlock({ resumo }) {
         <div style={summaryMetricCardStyle}><span style={summaryMetricLabelStyle}>Contactos Desmarcados</span><strong>{resumo.desmarcados}</strong></div>
       </div>
 
-      <div style={breakdownRowStyle}>
-        <span style={breakdownLabelStyle}>Por Tipo de Contacto:</span>
-        {Object.entries(resumo.porTipoContacto).filter(([, count]) => count > 0).map(([tipoLabel, count]) => (
-          <span key={tipoLabel} style={breakdownBadgeStyle}>{tipoLabel}: <strong>{count}</strong></span>
-        ))}
+      <div style={miniTableWrapStyle}>
+        <MiniTable title="Por Tipo de Contacto" rows={resumo.porTipoContacto} />
+        <MiniTable title="Por Tipo de Cliente" rows={resumo.porTipoCliente} />
       </div>
-
-      <div style={breakdownRowStyle}>
-        <span style={breakdownLabelStyle}>Por Tipo de Cliente:</span>
-        {Object.entries(resumo.porTipoCliente).filter(([, count]) => count > 0).map(([tipoLabel, count]) => (
-          <span key={tipoLabel} style={breakdownBadgeStyle}>{tipoLabel}: <strong>{count}</strong></span>
-        ))}
-      </div>
-    </>
+    </div>
   );
 }
 
@@ -1635,9 +1654,19 @@ const summaryTitleStyle = { fontSize: '1.1rem', fontWeight: 500, marginBottom: 6
 const summaryGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 };
 const summaryMetricCardStyle = { background: '#f6f8fb', border: '1px solid #dce3ea', borderRadius: 8, padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
 const summaryMetricLabelStyle = { color: '#4b5563', fontSize: '0.88rem' };
-const breakdownRowStyle = { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 8 };
-const breakdownLabelStyle = { fontSize: '0.85rem', fontWeight: 600, color: '#4b5563' };
-const breakdownBadgeStyle = { background: '#eef2f7', border: '1px solid #dce3ea', borderRadius: 999, padding: '2px 10px', fontSize: '0.85rem', color: '#1d2327' };
+// Cartões-destaque do Resumo (Total de Contactos / Total de Clientes / Realizados)
+const resumoHeroGridStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 10 };
+const resumoHeroCardStyle = { background: '#fff', border: '1px solid #dce3ea', borderRadius: 10, padding: '14px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 };
+const resumoHeroValueStyle = { fontSize: '1.9rem', fontWeight: 700, color: '#1d2327', lineHeight: 1 };
+const resumoHeroLabelStyle = { fontSize: '0.8rem', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.03em' };
+
+// Mini-tabelas "Por Tipo de Contacto" / "Por Tipo de Cliente"
+const miniTableWrapStyle = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14, marginTop: 12 };
+const miniTableBoxStyle = { border: '1px solid #dce3ea', borderRadius: 8, overflow: 'hidden', background: '#fff' };
+const miniTableTitleStyle = { background: '#eef2f7', padding: '7px 12px', fontWeight: 600, fontSize: '0.85rem', color: '#374151', borderBottom: '1px solid #dce3ea' };
+const miniTableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' };
+const miniTableLabelCellStyle = { padding: '6px 12px', borderTop: '1px solid #f0f1f2', color: '#374151' };
+const miniTableValueCellStyle = { padding: '6px 12px', borderTop: '1px solid #f0f1f2', textAlign: 'right', fontWeight: 700, color: '#1d2327' };
 const summaryListSectionStyle = { marginTop: 10 };
 const detailReportsSectionStyle = { marginTop: 16, paddingTop: 10, borderTop: '1px solid #e5e7eb' };
 const subHeadingStyle = { fontSize: '1.02rem', fontWeight: 600, color: '#374151', marginBottom: 6 };
