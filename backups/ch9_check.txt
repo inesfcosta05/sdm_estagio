@@ -1,9 +1,0 @@
-1125	Atalhos de Teclado Implementados (só ficam ativos se o utilizador ligar essa preferência no perfil; desligados por omissão):
-1126	•  Alt+H → Home
-1127	•  Alt+F → Fichas
-1128	•  Alt+C → Clientes
-1129	•  Alt+P → Páginas
-1130	•  Alt+U → Perfil
-1131	•  Alt+R → Relatórios
-1132	•  Alt+N → Nova Ficha
-1133	
