@@ -25,6 +25,8 @@ const mysql = require('mysql2');
 const cors = require('cors');
 const crypto = require('crypto');
 const axios = require('axios');
+const path = require('path');
+const fs = require('fs');
 const SyncService = require('./sync-service');
 
 const app = express();
@@ -2500,6 +2502,30 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok' });
   });
 });
+
+// ============================================
+// 🌐 FALLBACK DO REACT ROUTER (SPA)
+// ============================================
+// No deployment atual (render.yaml), o frontend corre num serviço estático
+// à parte — o "Not Found" ao dar refresh numa rota interna é resolvido do
+// lado desse serviço (frontend/public/_redirects + render.yaml routes),
+// não aqui. Este bloco cobre o outro cenário possível: se este servidor
+// Express alguma vez servir o build do frontend diretamente (dev local
+// combinado, ou um deployment de serviço único), qualquer rota que não seja
+// /api/* e não corresponda a um ficheiro estático real cai sempre no
+// index.html, para o React Router tratar da navegação do lado do cliente.
+// Só se ativa se a pasta build existir mesmo ao lado do backend — caso
+// contrário fica inerte, sem quebrar nada na topologia atual de dois
+// serviços separados.
+const frontendBuildPath = path.join(__dirname, '..', 'frontend', 'build');
+if (fs.existsSync(frontendBuildPath)) {
+  console.log('🌐 A servir o build do frontend a partir de', frontendBuildPath);
+  app.use(express.static(frontendBuildPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(frontendBuildPath, 'index.html'));
+  });
+}
 
 const PORT = process.env.PORT || 3001;
 // ============================================

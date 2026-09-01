@@ -1075,7 +1075,7 @@ export default function Relatorios({ user = null }) {
             item.contactoEfetuado ? 'Sim' : 'Não',
             item.motivoResumo,
             item.motivoTipoProximo,
-            item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : '—',
+            item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : 'Sem data',
             item.assuntoTratado ? 'Sim' : 'Não'
           ]);
           row.alignment = { vertical: 'top', wrapText: true };
@@ -1261,7 +1261,7 @@ export default function Relatorios({ user = null }) {
           grupo.monthLabel,
           getClienteNome(ficha),
           getGestor(ficha),
-          meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : '—',
+          meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : 'Sem data',
           isEstadoPlaceholder(meta.estado) ? '—' : (meta.estado || '—'),
           (meta.servicos || []).map((s) => `${s.servico || '—'}: ${s.valor || '—'}`).join('; ') || '—',
           parseMoeda(meta.valorTotal) ?? '—',
@@ -1317,9 +1317,9 @@ export default function Relatorios({ user = null }) {
           parseMoeda(meta.valorTotal) ?? '—',
           stripHtml(meta.descritivoFatura),
           meta.valorFatura || '—',
-          meta.dataFatura ? toDatePt(meta.dataFatura) : '—',
-          meta.dataPrevistaRecebimento ? toDatePt(meta.dataPrevistaRecebimento) : '—',
-          meta.dataUltimoContactoFinanceiro ? toDatePt(meta.dataUltimoContactoFinanceiro) : '—'
+          meta.dataFatura ? toDatePt(meta.dataFatura) : 'Sem data',
+          meta.dataPrevistaRecebimento ? toDatePt(meta.dataPrevistaRecebimento) : 'Sem data',
+          meta.dataUltimoContactoFinanceiro ? toDatePt(meta.dataUltimoContactoFinanceiro) : 'Sem data'
         ]);
         row.alignment = { vertical: 'top', wrapText: true };
       });
@@ -1712,7 +1712,7 @@ export default function Relatorios({ user = null }) {
                                           <div style={detailLineStyle}><strong>Contacto efetuado?</strong> {item.contactoEfetuado ? 'Sim' : 'Não'}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Resumo do Contacto:</strong> {item.motivoResumo}</div>
                                           <div style={detailLineStyle}><strong>Motivo/Tipo do Próximo Contacto:</strong> {item.motivoTipoProximo}</div>
-                                          <div style={detailLineStyle}><strong>Data do Próximo Contacto:</strong> {item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : '—'}</div>
+                                          <div style={detailLineStyle}><strong>Data do Próximo Contacto:</strong> {item.dataProximoContacto ? toDatePt(item.dataProximoContacto) : 'Sem data'}</div>
                                           <div style={detailLineStyle}><strong>Processo encerrado?</strong> {item.assuntoTratado ? 'Sim' : 'Não'}</div>
                                         </div>
                                       ))}
@@ -2010,7 +2010,7 @@ function PropostasComerciais({
                       )}
                     </div>
                     <div style={detailLineStyle}><strong>Gestor:</strong> {getGestor(ficha)}</div>
-                    <div style={detailLineStyle}><strong>Data de apresentação:</strong> {meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : '—'}</div>
+                    <div style={detailLineStyle}><strong>Data de apresentação:</strong> {meta.dataApresentacao ? toDatePt(meta.dataApresentacao) : 'Sem data'}</div>
 
                     {meta.servicos && meta.servicos.length > 0 && (
                       <table style={servicosTableStyle}>
