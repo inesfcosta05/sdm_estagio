@@ -269,7 +269,7 @@ export default function NovoCliente({ disableVisualEditor = false }) {
 
   return (
     <div style={{ fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif', fontSize: '0.93rem', color: '#1d2327' }}>
-      <h2 style={{ fontWeight: 400, fontSize: '1.5rem', marginBottom: 16 }}>Adicionar novo Clientes</h2>
+      <h2 style={{ fontWeight: 400, fontSize: '1.5rem', marginBottom: 16 }}>Adicionar novo Cliente</h2>
 
       {sucesso && <div style={alertOkStyle}>Cliente guardado com sucesso!</div>}
       {erro && <div style={alertErrStyle}>{erro}</div>}

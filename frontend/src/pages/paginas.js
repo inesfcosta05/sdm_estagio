@@ -433,13 +433,13 @@ export default function Paginas() {
             <div style={{ padding: 14, background: '#eef3f8', minHeight: 110 }}>
               {helpTab === 'visao' ? (
                 <p style={{ margin: 0, lineHeight: 1.5 }}>
-                  As Páginas são semelhantes aos Artigos na medida em que têm também um título, corpo de texto, e metadados associados, mas são diferentes no aspecto de que não estão ligados a uma ordem cronológica, são uma espécie de artigos permanentes. As Páginas não estão categorizadas nem possuem etiquetas, mas podem ser organizadas hierarquicamente. Pode organizar as páginas em subpáginas, tornando-as “dependentes” de outra página, criando assim um grupo de páginas.
+                  As Páginas são semelhantes aos Artigos na medida em que têm também um título, corpo de texto, e metadados associados, mas são diferentes no aspeto de que não estão ligados a uma ordem cronológica, são uma espécie de artigos permanentes. As Páginas não estão categorizadas nem possuem etiquetas, mas podem ser organizadas hierarquicamente. Pode organizar as páginas em subpáginas, tornando-as “dependentes” de outra página, criando assim um grupo de páginas.
                 </p>
               ) : (
                 <p style={{ margin: 0, lineHeight: 1.5 }}>
                   A gestão das páginas é muito semelhante à gestão dos artigos, e os ecrãs podem ser personalizados da mesma forma.
                   <br /><br />
-                  Pode também executar os mesmos tipos de acções, incluindo a filtragem da lista, actuar numa página usando as ligações de acção que aparecem quando passa o rato sobre uma linha, ou usando o menu de Edição por lotes, para editar os dados de várias páginas de uma só vez.
+                  Pode também executar os mesmos tipos de ações, incluindo a filtragem da lista, atuar numa página usando as ligações de ação que aparecem quando passa o rato sobre uma linha, ou usando o menu de Edição por lotes, para editar os dados de várias páginas de uma só vez.
                 </p>
               )}
             </div>
@@ -679,8 +679,8 @@ function Toolbar({ acaoBulk, onAcaoBulk, filtroData, onFiltroData, datas, total,
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 6px', flexWrap: 'wrap' }}>
       <select value={acaoBulk} onChange={(e) => onAcaoBulk(e.target.value)} style={smallSelectStyle}>
-        <option value="-1">Acções por lotes</option>
-        <option value="delete">Mover para lixo</option>
+        <option value="-1">Ações por lotes</option>
+        <option value="delete">Mover para o lixo</option>
         <option value="restore">Restaurar</option>
         <option value="hard-delete">Eliminar permanentemente</option>
       </select>

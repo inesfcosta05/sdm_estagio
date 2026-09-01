@@ -595,7 +595,7 @@ const Clientes = () => {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
         <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 400 }}>Clientes</h2>
         <button type="button" style={{ ...btnStyle, color: '#2271b1', borderColor: '#2271b1' }} onClick={() => navigate('/clientes/novo')}>
-          Adicionar novo Clientes
+          Adicionar novo Cliente
         </button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
           <input

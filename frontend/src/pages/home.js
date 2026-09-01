@@ -4,11 +4,11 @@ import HomeWidget from '../components/HomeWidget';
 const INITIAL_WIDGETS = [
   {
     id: 'bem-vindo',
-    title: 'Bem-Vindo',
+    title: 'Bem-vindo',
     content: (
       <>
-        Caso necessite de ajuda contacte{' '}
-        <a href="mailto:web@celeuma.pt">web@celeuma.pt</a>
+        Caso necessite de ajuda, contacte-nos em{' '}
+        <a href="mailto:web@celeuma.pt">web@celeuma.pt</a>.
       </>
     ),
   },

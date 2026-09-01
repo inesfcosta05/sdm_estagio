@@ -262,7 +262,7 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
             <button style={linkBtnStyle}>Editar</button>
           </div>
           <div style={{ borderTop: '1px solid #dcdcde', marginTop: 10, paddingTop: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <button style={linkBtnStyle} onClick={handleMoveToTrash}>← Mover para lixo</button>
+            <button style={linkBtnStyle} onClick={handleMoveToTrash}>← Mover para o lixo</button>
             <button style={publishBtnStyle} onClick={() => handleSave('publish')}>Publicar</button>
           </div>
         </SideBox>
@@ -373,7 +373,7 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
           </div>
 
           <div style={screenSectionTitleStyle}>Opções adicionais</div>
-          <label style={screenCheckboxRowStyle}><input type="checkbox" checked={fullHeightEditor} onChange={(e) => setFullHeightEditor(e.target.checked)} /> Activar o editor a toda a altura e funcionalidade livre de distracções.</label>
+          <label style={screenCheckboxRowStyle}><input type="checkbox" checked={fullHeightEditor} onChange={(e) => setFullHeightEditor(e.target.checked)} /> Ativar o editor a toda a altura e funcionalidade livre de distrações.</label>
 
           <button type="button" style={screenCloseBtnStyle} onClick={() => setScreenOptionsOpen(false)}>Opções deste ecrã ▲</button>
         </div>
@@ -391,7 +391,7 @@ export default function NovaPagina({ disableVisualEditor = false, mode = 'create
             <div style={{ padding: 14, background: '#eef3f8', minHeight: 120, lineHeight: 1.5 }}>
               {helpTab === 'sobre' && (
                 <p style={{ margin: 0 }}>
-                  As Páginas são semelhantes aos Artigos na medida em que têm também um título, corpo de texto, e metadados associados, mas são diferentes no aspecto de que não estão ligados a uma ordem cronológica, são uma espécie de artigos permanentes. As Páginas não estão categorizadas nem possuem etiquetas, mas podem ser organizadas hierarquicamente. Pode organizar as páginas em subpáginas, tornando-as “dependentes” de outra página, criando assim um grupo de páginas.
+                  As Páginas são semelhantes aos Artigos na medida em que têm também um título, corpo de texto, e metadados associados, mas são diferentes no aspeto de que não estão ligados a uma ordem cronológica, são uma espécie de artigos permanentes. As Páginas não estão categorizadas nem possuem etiquetas, mas podem ser organizadas hierarquicamente. Pode organizar as páginas em subpáginas, tornando-as “dependentes” de outra página, criando assim um grupo de páginas.
                 </p>
               )}
               {helpTab === 'multimedia' && (

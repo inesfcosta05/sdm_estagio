@@ -10,7 +10,7 @@ const Login = ({ onLogin, language = 'default' }) => {
   const t = {
     pt: {
       ended: 'Sessão terminada.',
-      title: 'Iniciar sessao',
+      title: 'Iniciar sessão',
       fill: 'Preencha utilizador e senha.',
       invalid: 'Utilizador ou senha inválidos.',
       unavailable: 'Servidor de autenticação indisponível. Tente novamente.',
