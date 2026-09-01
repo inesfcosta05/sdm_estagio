@@ -152,6 +152,20 @@ db.getConnection((err, connection) => {
   );
 });
 
+// Todos os campos de data lidos do wp_postmeta (formato bruto YYYYMMDD)
+// passam por aqui em vez de um STR_TO_DATE() a solo. Já foi confirmado
+// diretamente na base de dados que não há datas-zero nem valores corrompidos
+// guardados atualmente (nenhuma linha em fichas/clients cai fora do intervalo
+// plausível), e que STR_TO_DATE() já devolve NULL para strings vazias ou
+// inválidas — mas este guard fica cá para impedir estruturalmente qualquer
+// "fantasma" de data (ex: um valor perto de 1899/1900, sintoma clássico de um
+// serial de data a 0 mal interpretado) de alguma vez chegar ao frontend ou a
+// um Excel exportado, seja qual for a causa: mesmo que STR_TO_DATE() consiga
+// interpretar um valor mal formatado como uma data literal, só o devolve se
+// o ano estiver dentro de 1990–2100; fora disso, é forçado a NULL.
+const safeDateSql = (metaValueExpr) =>
+  `(CASE WHEN STR_TO_DATE(${metaValueExpr}, '%Y%m%d') BETWEEN '1990-01-01' AND '2100-12-31' THEN STR_TO_DATE(${metaValueExpr}, '%Y%m%d') ELSE NULL END)`;
+
 const normalizeUserRole = (role) => {
   const raw = (role || '').toString().trim().toLowerCase();
   if (raw === 'administrator' || raw === 'administrador') return 'admin';
@@ -494,10 +508,10 @@ const assertAdminByLogin = (actingLogin, cb) => {
 const CONTACT_META_SUBQUERY = `(
   SELECT
     post_id,
-    MAX(CASE WHEN meta_key = 'data_do_proximo_contacto' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_proximo_contacto,
+    MAX(CASE WHEN meta_key = 'data_do_proximo_contacto' THEN ${safeDateSql('meta_value')} END) AS data_proximo_contacto,
     MAX(CASE WHEN meta_key = 'tipo_de_contacto' THEN meta_value END) AS tipo_contacto,
     MAX(CASE WHEN meta_key = 'pessoa_de_contacto' THEN meta_value END) AS pessoa_contacto,
-    MAX(CASE WHEN meta_key = 'data_do_contacto' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_contacto,
+    MAX(CASE WHEN meta_key = 'data_do_contacto' THEN ${safeDateSql('meta_value')} END) AS data_contacto,
     MAX(CASE WHEN meta_key = 'inicio_do_contacto' THEN meta_value END) AS inicio_contacto,
     MAX(CASE WHEN meta_key = 'fim_do_contacto' THEN meta_value END) AS fim_contacto,
     MAX(CASE WHEN meta_key = 'motivoresumo_do_contacto' THEN meta_value END) AS motivo_resumo_contacto,
@@ -609,15 +623,15 @@ app.get('/api/fichas/propostas-meta', (req, res) => {
       MAX(CASE WHEN meta_key = 'descritivo_da_proposta' THEN meta_value END) AS descritivo_proposta,
       MAX(CASE WHEN meta_key = 'valor_total_da_proposta' THEN meta_value END) AS valor_total_proposta,
       MAX(CASE WHEN meta_key = 'estado_da_proposta' THEN meta_value END) AS estado_proposta,
-      MAX(CASE WHEN meta_key = 'data_de_apresentacao_da_proposta' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_apresentacao_proposta,
+      MAX(CASE WHEN meta_key = 'data_de_apresentacao_da_proposta' THEN ${safeDateSql('meta_value')} END) AS data_apresentacao_proposta,
       MAX(CASE WHEN meta_key = 'possibilidade_de_negocio' THEN meta_value END) AS possibilidade_negocio,
       MAX(CASE WHEN meta_key = 'motivo_da_possibilidade_de_negocio' THEN meta_value END) AS motivo_possibilidade_negocio,
       MAX(CASE WHEN meta_key = 'valor_total_adjudicado' THEN meta_value END) AS valor_total_adjudicado,
       MAX(CASE WHEN meta_key = 'descritivo_da_fatura' THEN meta_value END) AS descritivo_fatura,
       MAX(CASE WHEN meta_key = 'valor_da_fatura' THEN meta_value END) AS valor_fatura,
-      MAX(CASE WHEN meta_key = 'data_da_fatura' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_fatura,
-      MAX(CASE WHEN meta_key = 'data_prevista_para_o_recebimento' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_prevista_recebimento,
-      MAX(CASE WHEN meta_key = 'data_do_ultimo_contacto_financeiro' THEN STR_TO_DATE(meta_value, '%Y%m%d') END) AS data_ultimo_contacto_financeiro
+      MAX(CASE WHEN meta_key = 'data_da_fatura' THEN ${safeDateSql('meta_value')} END) AS data_fatura,
+      MAX(CASE WHEN meta_key = 'data_prevista_para_o_recebimento' THEN ${safeDateSql('meta_value')} END) AS data_prevista_recebimento,
+      MAX(CASE WHEN meta_key = 'data_do_ultimo_contacto_financeiro' THEN ${safeDateSql('meta_value')} END) AS data_ultimo_contacto_financeiro
     FROM wp_postmeta
     WHERE meta_key IN (
       'descritivo_da_proposta', 'valor_total_da_proposta', 'estado_da_proposta', 'data_de_apresentacao_da_proposta',

@@ -30,6 +30,15 @@ const applyBordersToSheet = (sheet) => {
 
 const normalizeKey = (value) => (value || '').toString().trim().toLowerCase();
 
+// Ano plausível para qualquer data de negócio nesta aplicação — nada aqui é
+// anterior a 1990 nem depois de 2100. Serve de última linha de defesa contra
+// qualquer "fantasma" de data corrompida (ex: um valor perto de 1899/1900,
+// sintoma clássico de um serial de data a 0 mal interpretado): mesmo que uma
+// string inesperada consiga ser parseada por new Date(), se o ano não bater
+// certo o valor é tratado como se não existisse, nunca mostrado ao
+// utilizador nem escrito num Excel.
+const isPlausibleYear = (yyyy) => yyyy >= 1990 && yyyy <= 2100;
+
 const toDateOnly = (value) => {
   if (value === 0) return '';
   if (!value) return '';
@@ -37,16 +46,17 @@ const toDateOnly = (value) => {
   const rawTrim = raw.trim();
   if (!rawTrim || rawTrim === '0' || rawTrim === '0000-00-00' || rawTrim === '0000-00-00 00:00:00') return '';
   const isoMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (isoMatch) return isoMatch[1];
+  if (isoMatch) return isPlausibleYear(Number(isoMatch[1].slice(0, 4))) ? isoMatch[1] : '';
   const ptMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
   if (ptMatch) {
     const [, dd, mm, yyyy] = ptMatch;
-    return `${yyyy}-${mm}-${dd}`;
+    return isPlausibleYear(Number(yyyy)) ? `${yyyy}-${mm}-${dd}` : '';
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   const yyyy = date.getFullYear();
+  if (!isPlausibleYear(yyyy)) return '';
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
