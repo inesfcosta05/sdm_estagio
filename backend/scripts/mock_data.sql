@@ -12,6 +12,107 @@
 -- Ver mock_data_cleanup.sql para reverter tudo isto de uma vez.
 -- =====================================================================
 
+-- ---------------------------------------------------------------------
+-- ESTRUTURA DAS TABELAS (IF NOT EXISTS — seguro mesmo que já existam)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS users (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  role TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  nome VARCHAR(100),
+  apelido VARCHAR(100),
+  alcunha VARCHAR(50),
+  nome_mostrado VARCHAR(250),
+  bio LONGTEXT,
+  site_url VARCHAR(100),
+  password_hash VARCHAR(255),
+  registado DATETIME,
+  imagem_url LONGTEXT,
+  preferences TEXT
+);
+
+CREATE TABLE IF NOT EXISTS clients (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  legacy_id INT UNIQUE,
+  denominacao_fiscal VARCHAR(255),
+  contacto_empresa VARCHAR(100),
+  pessoa_contacto_nome VARCHAR(255),
+  pessoa_contacto_cargo VARCHAR(255),
+  pessoa_contacto_telefone_email VARCHAR(255),
+  morada TEXT,
+  nif VARCHAR(20),
+  comercial_id INT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  author VARCHAR(100),
+  estado VARCHAR(50),
+  visibilidade VARCHAR(50),
+  publicado_em DATETIME,
+  senha_visibilidade VARCHAR(255),
+  observacoes TEXT,
+  localidade VARCHAR(255),
+  INDEX idx_nif (nif),
+  INDEX idx_comercial_id (comercial_id)
+);
+
+CREATE TABLE IF NOT EXISTS fichas (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  legacy_id INT UNIQUE,
+  client_legacy_id INT,
+  title TEXT,
+  post_status VARCHAR(50),
+  post_visibility VARCHAR(50),
+  post_date DATETIME,
+  author VARCHAR(100),
+  tipo_contacto VARCHAR(50),
+  pessoa_contacto VARCHAR(255),
+  contacto TEXT,
+  data_contacto DATE,
+  inicio_contacto TIME,
+  fim_contacto TIME,
+  motivo_resumo_contacto TEXT,
+  contacto_efetuado TINYINT(1),
+  follow_up TINYINT(1),
+  novo_contacto TINYINT(1),
+  tipo_proximo_contacto VARCHAR(50),
+  data_proximo_contacto DATE,
+  data_apresentacao_proposta DATE,
+  estado_proposta VARCHAR(50),
+  descritivo_proposta TEXT,
+  servicos_proposta TEXT,
+  valor_total_proposta DECIMAL(12,2),
+  possibilidade_negocio VARCHAR(20),
+  motivo_possibilidade_negocio TEXT,
+  servicos_adjudicados TEXT,
+  valor_total_adjudicado DECIMAL(12,2),
+  descritivo_fatura TEXT,
+  valor_fatura DECIMAL(12,2),
+  data_fatura DATE,
+  data_prevista_recebimento DATE,
+  data_ultimo_contacto_financeiro DATE,
+  relatorio_errado TINYINT(1) DEFAULT 0,
+  porque_relatorio_errado TEXT,
+  assunto_tratado TINYINT(1) DEFAULT 0,
+  anexos TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_client_legacy_id (client_legacy_id),
+  INDEX idx_author (author),
+  INDEX idx_post_status (post_status)
+);
+
+CREATE TABLE IF NOT EXISTS wp_postmeta (
+  meta_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  post_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  meta_key VARCHAR(255) DEFAULT NULL,
+  meta_value LONGTEXT,
+  INDEX idx_post_id (post_id),
+  INDEX idx_meta_key (meta_key(191))
+);
+
 START TRANSACTION;
 
 -- ---------------------------------------------------------------------

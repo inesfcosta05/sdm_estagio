@@ -201,8 +201,8 @@ function AppShell({ sidebarMinimized, onSidebarToggle, user, onLogout, onImperso
             <Route path="/fichas/nova" element={<NovaFicha disableVisualEditor={!!prefs.disableVisualEditor} />} />
             <Route path="/fichas/:id/editar" element={<EditarFicha disableVisualEditor={!!prefs.disableVisualEditor} />} />
             <Route path="/clientes" element={<Clientes />} />
-            <Route path="/clientes/novo" element={<NovoCliente />} />
-            <Route path="/clientes/:id/editar" element={<EditarCliente />} />
+            <Route path="/clientes/novo" element={<NovoCliente disableVisualEditor={!!prefs.disableVisualEditor} />} />
+            <Route path="/clientes/:id/editar" element={<EditarCliente disableVisualEditor={!!prefs.disableVisualEditor} />} />
             <Route path="/paginas" element={<Paginas />} />
             <Route path="/paginas/novo" element={<NovaPagina disableVisualEditor={!!prefs.disableVisualEditor} />} />
             <Route path="/paginas/:id/editar" element={<EditarPagina disableVisualEditor={!!prefs.disableVisualEditor} />} />

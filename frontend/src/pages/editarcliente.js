@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
+import RichTextEditor from '../components/RichTextEditor';
 import '../api';
 
 const MONTHS = [
@@ -32,7 +33,7 @@ const parseDateParts = (value) => {
   };
 };
 
-export default function EditarCliente() {
+export default function EditarCliente({ disableVisualEditor = false }) {
   const { id } = useParams();
   const navigate = useNavigate();
 
@@ -104,6 +105,7 @@ export default function EditarCliente() {
   }, [id]);
 
   const handleChange = (e) => setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
+  const handleFieldValueChange = (name, value) => setForm((prev) => ({ ...prev, [name]: value }));
 
   const getColumnForBox = (layout, key) => {
     if (layout.left.includes(key)) return 'left';
@@ -206,7 +208,7 @@ export default function EditarCliente() {
     { name: 'morada', label: 'Morada' },
     { name: 'localidade', label: 'Localidade' },
     { name: 'nif', label: 'NIF', required: true },
-    { name: 'observacoes', label: 'Observações', type: 'textarea' },
+    { name: 'observacoes', label: 'Observações', type: 'richtext' },
     { name: 'comercial', label: 'Comercial', required: true, type: 'select' }
   ];
 
@@ -261,14 +263,15 @@ export default function EditarCliente() {
                     <option key={`field-${c.id || c.value}`} value={c.value}>{c.label}</option>
                   ))}
                 </select>
-              ) : f.type === 'textarea' ? (
-                <textarea
-                  name={f.name}
-                  value={form[f.name]}
-                  onChange={handleChange}
-                  rows={4}
-                  style={{ ...fieldInputStyle, width: '100%', maxWidth: 680, resize: 'vertical' }}
-                />
+              ) : f.type === 'richtext' ? (
+                <div style={{ maxWidth: 680 }}>
+                  <RichTextEditor
+                    value={form[f.name]}
+                    onChange={(value) => handleFieldValueChange(f.name, value)}
+                    disableVisualEditor={disableVisualEditor}
+                    minHeight={130}
+                  />
+                </div>
               ) : (
                 <input type="text" name={f.name} value={form[f.name]} onChange={handleChange} style={{ ...fieldInputStyle, width: '100%', maxWidth: f.name === 'nif' ? 320 : 680 }} />
               )}
